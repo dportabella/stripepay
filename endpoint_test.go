@@ -61,7 +61,15 @@ func newFakeAccount(t *testing.T, initial ...Endpoint) (*fakeAccount, []fakeRequ
 			id := strings.TrimPrefix(r.URL.Path, "/v1/webhook_endpoints/")
 			for i := range a.list {
 				if a.list[i].ID == id {
-					a.list[i].EnabledEvents = r.Form["enabled_events[]"]
+					if r.Form.Has("disabled") {
+						a.list[i].Status = "enabled"
+						if r.Form.Get("disabled") == "true" {
+							a.list[i].Status = "disabled"
+						}
+					}
+					if r.Form.Has("enabled_events[]") {
+						a.list[i].EnabledEvents = r.Form["enabled_events[]"]
+					}
 					_ = json.NewEncoder(w).Encode(a.list[i])
 					return
 				}
@@ -259,5 +267,39 @@ func TestHasEvents(t *testing.T) {
 	}
 	if e.HasEvents([]string{"a"}) || e.HasEvents([]string{"a", "b", "c"}) {
 		t.Error("no more and no fewer")
+	}
+}
+
+// TestSetEndpointEnabledKeepsTheSecret: when a service moves between modes, the endpoint of
+// the mode it left has to stop receiving. Deleting it would work, but it would throw away a
+// signing secret that cannot be recovered; disabling it means moving back is one call.
+func TestSetEndpointEnabled(t *testing.T) {
+	target := "https://example.test/api/webhook"
+	account, _ := newFakeAccount(t, Endpoint{ID: "we_1", URL: target, Status: "enabled",
+		EnabledEvents: testEvents})
+	c := account.client(t, "sk_live_abc")
+	ctx := context.Background()
+
+	ep, err := c.SetEndpointEnabled(ctx, "we_1", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Status != "disabled" {
+		t.Errorf("status = %q, wanted disabled", ep.Status)
+	}
+	if len(account.deleted) != 0 {
+		t.Errorf("disabling is not deleting: %v", account.deleted)
+	}
+	// And the event list is untouched: it is not an update of everything.
+	if !ep.HasEvents(testEvents) {
+		t.Errorf("events = %v", ep.EnabledEvents)
+	}
+
+	ep, err = c.SetEndpointEnabled(ctx, "we_1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.Status != "enabled" {
+		t.Errorf("status = %q, wanted enabled", ep.Status)
 	}
 }

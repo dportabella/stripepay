@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -111,6 +112,26 @@ func (c *Client) UpdateEndpointEvents(ctx context.Context, id string, events []s
 	for _, e := range events {
 		f.Add("enabled_events[]", e)
 	}
+	var ep Endpoint
+	if err := c.post(ctx, "/v1/webhook_endpoints/"+url.PathEscape(id), f, "", &ep); err != nil {
+		return nil, err
+	}
+	return &ep, nil
+}
+
+// SetEndpointEnabled turns a webhook endpoint on or off without deleting it.
+//
+// This is what you want when a service moves between modes. Webhook endpoints are
+// per mode, and the one belonging to the mode you just left does not go away on its own: on
+// a SHARED account it keeps receiving the other projects' events of that mode, your server
+// no longer knows its signing secret, and every delivery is rejected. Days later Stripe
+// sends a failure notice about something that is not a problem.
+//
+// Disabling it rather than deleting it keeps the signing secret alive, so moving back is one
+// call and not a new secret.
+func (c *Client) SetEndpointEnabled(ctx context.Context, id string, enabled bool) (*Endpoint, error) {
+	f := url.Values{}
+	f.Set("disabled", strconv.FormatBool(!enabled))
 	var ep Endpoint
 	if err := c.post(ctx, "/v1/webhook_endpoints/"+url.PathEscape(id), f, "", &ep); err != nil {
 		return nil, err

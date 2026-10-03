@@ -102,9 +102,13 @@ It leaves the account with a single endpoint pointing at your URL, subscribed to
 events you ask for, with **no API version pinned**, and it corrects the event list if it has
 drifted. If an endpoint is already there and you do not hold its secret it refuses to touch
 it, because deleting a webhook endpoint is a decision for whoever owns the account.
-[`StaleEndpoints`](endpoint.go) finds the ones left behind pointing at your own server, which
-is the failure that actually happens when a service is switched from test to live and the old
-endpoint stays alive rejecting every delivery.
+[`StaleEndpoints`](endpoint.go) finds the ones left behind pointing at your own server, and
+[`SetEndpointEnabled`](endpoint.go) turns one off without deleting it. Those two are for the
+failure that actually happens when a service moves between modes: endpoints are per mode, the
+one you left does not go away on its own, and on a shared account it keeps receiving the other
+projects' events of that mode and rejecting every one of them, because your server no longer
+knows its signing secret. Disabling rather than deleting keeps the secret alive, so moving
+back is one call and not a new secret.
 
 ## The verdicts
 
