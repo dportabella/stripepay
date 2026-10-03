@@ -133,6 +133,14 @@ case errors.As(err, &bad):
 }
 ```
 
+**The language of the payment page** has to be one Stripe accepts, and the list is not
+obvious: it has no Catalan, no Basque, no Welsh. `Locale("ca")` returns `"auto"` (the
+browser decides) rather than something Stripe refuses, `Locale("pt-PT")` returns `"pt"`, and
+`CreateSession` fails outright on a locale Stripe does not know — because otherwise that is
+a 400 that only shows up in production, and only for the language nobody tested with. If a
+language Stripe lacks has speakers who read another one perfectly well, map it explicitly in
+your application: it knows its audience, the library does not.
+
 `Client.Session` tells one more case apart, because it leads to a different decision:
 `ErrNoSuchObject` means the session **does not exist** (an invented identifier, or one from
 another account or another mode), and it must not be confused with "Stripe is not

@@ -66,11 +66,14 @@ type SessionParams struct {
 	TaxCode     string // Stripe product tax code, e.g. "txcd_20060045"
 
 	// The buyer.
-	CustomerEmail         string
-	Locale                string // language of the payment page ("en", "fr", "de"…)
-	CollectBillingAddress bool   // needed to know the country and split the tax yourself
-	CollectTaxID          bool   // asks for the VAT number and puts it on the receipt
-	CreateCustomer        bool   // creates the Customer even for a one-off payment
+	CustomerEmail string
+	// Locale is the language of the payment page. It has to be one Stripe accepts, or
+	// creating the session fails: see [Locale] and [LocaleSupported]. Empty means Stripe's
+	// default, which is the buyer's browser.
+	Locale                string
+	CollectBillingAddress bool // needed to know the country and split the tax yourself
+	CollectTaxID          bool // asks for the VAT number and puts it on the receipt
+	CreateCustomer        bool // creates the Customer even for a one-off payment
 
 	// Where the buyer comes back to. SuccessURL must carry `{CHECKOUT_SESSION_ID}`, which
 	// Stripe substitutes: see [SessionIDPlaceholder].
@@ -231,6 +234,10 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 			return nil, fmt.Errorf("stripepay: %q is a deferred payment method and is not accepted: "+
 				"the session would close before the money arrived", m)
 		}
+	}
+	if p.Locale != "" && !LocaleSupported(p.Locale) {
+		return nil, fmt.Errorf("stripepay: Stripe does not accept the locale %q; pass one it does "+
+			"or run it through Locale() first", p.Locale)
 	}
 	if _, reserved := p.Metadata[MetadataService]; reserved {
 		return nil, fmt.Errorf("stripepay: the %q metadata key is set by the client, not by the project", MetadataService)
