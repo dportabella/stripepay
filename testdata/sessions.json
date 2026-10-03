@@ -1,0 +1,276 @@
+[
+  {
+    "name": "the good purchase",
+    "comment": "Ours, mode payment, paid, currency and amount as expected.",
+    "service": "shop",
+    "expect": { "reference": "ord_7f3a", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "ok",
+    "session": {
+      "id": "cs_live_a1",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 9000,
+      "currency": "eur",
+      "client_reference_id": "ord_7f3a",
+      "payment_intent": "pi_a1",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop", "product": "guide" },
+      "customer_details": {
+        "email": "buyer@example.test",
+        "name": "A Buyer",
+        "address": { "country": "ES", "city": "Barcelona", "postal_code": "08001", "line1": "Carrer 1" },
+        "tax_ids": [{ "type": "es_cif", "value": "B12345678" }]
+      }
+    }
+  },
+  {
+    "name": "with Stripe Tax on, the net amount is the total minus the tax",
+    "comment": "115.00 with 19.79 of tax included: the net amount is 95.21, and that is what is compared.",
+    "service": "shop",
+    "expect": { "reference": "ord_tax", "currency": "EUR", "min_net_cents": 9521 },
+    "want": "ok",
+    "session": {
+      "id": "cs_live_tax",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 11500,
+      "currency": "eur",
+      "client_reference_id": "ord_tax",
+      "total_details": { "amount_tax": 1979 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "more money came in than expected",
+    "comment": "A payment is never rejected for being too large: the comparison is a minimum.",
+    "service": "shop",
+    "expect": { "reference": "ord_more", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "ok",
+    "session": {
+      "id": "cs_live_more",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 9500,
+      "currency": "eur",
+      "client_reference_id": "ord_more",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "a sale of another project on the same account",
+    "comment": "The account is shared and Stripe delivers every event to every endpoint. Silence: nothing delivered, nobody alerted.",
+    "service": "shop",
+    "expect": { "reference": "ord_7f3a", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "foreign",
+    "session": {
+      "id": "cs_live_other_project",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 3900,
+      "currency": "eur",
+      "client_reference_id": "bk_c0ffee",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "booking", "booking_id": "bk_c0ffee" }
+    }
+  },
+  {
+    "name": "a session with no project mark at all",
+    "comment": "Created by hand from the Stripe dashboard, or from before the mark existed. Not ours.",
+    "service": "shop",
+    "expect": { "reference": "ord_7f3a", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "foreign",
+    "session": {
+      "id": "cs_live_bare",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 9000,
+      "currency": "eur",
+      "client_reference_id": "ord_7f3a",
+      "total_details": { "amount_tax": 0 },
+      "metadata": {}
+    }
+  },
+  {
+    "name": "a deferred payment: closed with the money not there",
+    "comment": "The case Stripe's own documentation warns about: checkout.session.completed arrives before the money. Never accepted.",
+    "service": "shop",
+    "expect": { "reference": "ord_sepa", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "deferred",
+    "session": {
+      "id": "cs_live_sepa",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "unpaid",
+      "amount_total": 9000,
+      "currency": "eur",
+      "client_reference_id": "ord_sepa",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "still being paid",
+    "comment": "The session is open: the buyer is on it. Not an incident.",
+    "service": "shop",
+    "expect": { "reference": "ord_open", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "not-paid",
+    "session": {
+      "id": "cs_live_open",
+      "mode": "payment",
+      "status": "open",
+      "payment_status": "unpaid",
+      "amount_total": 9000,
+      "currency": "eur",
+      "client_reference_id": "ord_open",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "expired without being paid",
+    "service": "shop",
+    "expect": { "reference": "ord_exp", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "expired",
+    "session": {
+      "id": "cs_live_exp",
+      "mode": "payment",
+      "status": "expired",
+      "payment_status": "unpaid",
+      "amount_total": 9000,
+      "currency": "eur",
+      "client_reference_id": "ord_exp",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "no payment was required",
+    "comment": "A legitimate state in other contexts, but here it would mean giving away what we sell.",
+    "service": "shop",
+    "expect": { "reference": "ord_free", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "no-payment-required",
+    "session": {
+      "id": "cs_live_free",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "no_payment_required",
+      "amount_total": 0,
+      "currency": "eur",
+      "client_reference_id": "ord_free",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "a subscription, not a one-off payment",
+    "service": "shop",
+    "expect": { "reference": "ord_sub", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "not-payment",
+    "session": {
+      "id": "cs_live_sub",
+      "mode": "subscription",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 9000,
+      "currency": "eur",
+      "client_reference_id": "ord_sub",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "ours, but of another row",
+    "comment": "Right mark and a reference that is not the expected one: either a bug of ours or somebody playing. Alert.",
+    "service": "shop",
+    "expect": { "reference": "ord_7f3a", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "reference",
+    "session": {
+      "id": "cs_live_other_row",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 9000,
+      "currency": "eur",
+      "client_reference_id": "ord_SOME_OTHER",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "ours and with no reference at all",
+    "comment": "One of our sessions always carries one: if it does not, something other than this library created it.",
+    "service": "shop",
+    "expect": { "reference": "ord_7f3a", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "reference",
+    "session": {
+      "id": "cs_live_noref",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 9000,
+      "currency": "eur",
+      "client_reference_id": "",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "paid in a currency that is worth less",
+    "service": "shop",
+    "expect": { "reference": "ord_usd", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "currency",
+    "session": {
+      "id": "cs_live_usd",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 9000,
+      "currency": "usd",
+      "client_reference_id": "ord_usd",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "less money than was meant to be charged",
+    "comment": "The reference is fixed when the session is created, the amount is decided by the session: a coupon or a changed price moves it.",
+    "service": "shop",
+    "expect": { "reference": "ord_cheap", "currency": "EUR", "min_net_cents": 9000 },
+    "want": "amount",
+    "session": {
+      "id": "cs_live_cheap",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 100,
+      "currency": "eur",
+      "client_reference_id": "ord_cheap",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "shop" }
+    }
+  },
+  {
+    "name": "the neighbour's sale, verified by the project that owns it",
+    "comment": "The very session that was \"foreign\" for the shop is the good one for whoever created it.",
+    "service": "booking",
+    "expect": { "reference": "bk_c0ffee", "currency": "EUR", "min_net_cents": 3900 },
+    "want": "ok",
+    "session": {
+      "id": "cs_live_other_project",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 3900,
+      "currency": "eur",
+      "client_reference_id": "bk_c0ffee",
+      "total_details": { "amount_tax": 0 },
+      "metadata": { "service": "booking", "booking_id": "bk_c0ffee" }
+    }
+  }
+]
