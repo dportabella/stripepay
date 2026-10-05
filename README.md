@@ -52,6 +52,26 @@ s, err := c.CreateSession(ctx, stripepay.SessionParams{
 // s.URL is where the buyer is sent.
 ```
 
+**Asking the buyer one more thing.** `CustomFields` puts up to three extra questions on the
+payment page — a billing address for a proper invoice, a purchase order number — for what
+only the buyer can tell you and Stripe does not ask for by itself. The answers come back on
+the paid session.
+
+```go
+CustomFields: []stripepay.CustomField{{
+    Key:   "billingaddress",
+    Label: "Billing address (only if you want an invoice)",
+    Optional: true, MaxLength: 200,
+}},
+
+// …once it is paid:
+address := s.CustomField("billingaddress")
+```
+
+The label goes out as written: a session is one buyer's payment page, so it is the caller
+who writes it in the language that page is in (`Locale`). Make them optional unless everyone
+has to answer: a field that only some buyers need blocks the payment of all the others.
+
 **Receiving the webhook.** [`Handler`](webhook.go) does the whole path: it reads the body
 without parsing it, checks its signature, claims the event exactly once, silently drops what
 belongs to the neighbour, answers 200 straight away — Stripe waits up to ten seconds for

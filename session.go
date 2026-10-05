@@ -102,9 +102,32 @@ type SessionParams struct {
 	// Link). Putting a deferred method here is an error, not an option.
 	PaymentMethodTypes []string
 
+	// CustomFields are extra questions on the payment page, up to three (Stripe's limit).
+	CustomFields []CustomField
+
 	// Metadata is whatever the project wants recorded on the session. The "service" key is
 	// reserved: the client fills it in from its [Options.Service].
 	Metadata map[string]string
+}
+
+// CustomField is one extra question asked on the payment page, for what only the buyer can
+// tell you and Stripe does not ask for by itself: a billing address for a proper invoice, a
+// purchase order number. Stripe allows three at most.
+//
+// The label is shown as written: a Checkout Session is one buyer's payment page, so it is
+// the caller who writes it in the language that page is in (see [SessionParams.Locale]).
+//
+// The answers come back on the paid session: see [Session.CustomField].
+type CustomField struct {
+	// Key is how the answer is found again, and it has to be unique in the session.
+	Key string
+	// Label is what the buyer reads.
+	Label string
+	// Optional lets the buyer leave it empty. Think twice before asking for something
+	// required: a field that only some buyers need blocks the payment of everyone else.
+	Optional bool
+	// MaxLength caps what can be typed. Zero leaves Stripe's own limit.
+	MaxLength int
 }
 
 // SessionIDPlaceholder is what Stripe substitutes with the session id in the SuccessURL.
@@ -157,6 +180,17 @@ type Session struct {
 		AmountTax int64 `json:"amount_tax"`
 	} `json:"total_details"`
 	CustomerDetails *CustomerDetails `json:"customer_details"`
+	// CustomFields are the answers to [SessionParams.CustomFields]. Read them with
+	// [Session.CustomField].
+	CustomFields []CustomFieldAnswer `json:"custom_fields"`
+}
+
+// CustomFieldAnswer is what the buyer wrote in a [CustomField].
+type CustomFieldAnswer struct {
+	Key  string `json:"key"`
+	Text struct {
+		Value string `json:"value"`
+	} `json:"text"`
 }
 
 // NetCents is what came in for the goods, without tax.
@@ -189,6 +223,17 @@ func (s *Session) Name() string {
 		return ""
 	}
 	return s.CustomerDetails.Name
+}
+
+// CustomField is what the buyer answered to the custom field with this key, trimmed, or ""
+// if it was left empty or never asked.
+func (s *Session) CustomField(key string) string {
+	for _, a := range s.CustomFields {
+		if a.Key == key {
+			return strings.TrimSpace(a.Text.Value)
+		}
+	}
+	return ""
 }
 
 // FirstTaxID is the VAT number the buyer gave, or "".
@@ -238,6 +283,22 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 	if p.Locale != "" && !LocaleSupported(p.Locale) {
 		return nil, fmt.Errorf("stripepay: Stripe does not accept the locale %q; pass one it does "+
 			"or run it through Locale() first", p.Locale)
+	}
+	if len(p.CustomFields) > 3 {
+		return nil, fmt.Errorf("stripepay: Stripe accepts at most 3 custom fields, and %d were given",
+			len(p.CustomFields))
+	}
+	seen := map[string]bool{}
+	for _, cf := range p.CustomFields {
+		switch {
+		case strings.TrimSpace(cf.Key) == "":
+			return nil, fmt.Errorf("stripepay: a custom field needs a Key: it is how its answer is read back")
+		case strings.TrimSpace(cf.Label) == "":
+			return nil, fmt.Errorf("stripepay: the custom field %q needs a Label: it is what the buyer reads", cf.Key)
+		case seen[cf.Key]:
+			return nil, fmt.Errorf("stripepay: two custom fields with the key %q", cf.Key)
+		}
+		seen[cf.Key] = true
 	}
 	if _, reserved := p.Metadata[MetadataService]; reserved {
 		return nil, fmt.Errorf("stripepay: the %q metadata key is set by the client, not by the project", MetadataService)
@@ -291,6 +352,20 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 	}
 	if !p.ExpiresAt.IsZero() {
 		f.Set("expires_at", strconv.FormatInt(p.ExpiresAt.Unix(), 10))
+	}
+
+	for i, cf := range p.CustomFields {
+		at := "custom_fields[" + strconv.Itoa(i) + "]"
+		f.Set(at+"[key]", cf.Key)
+		f.Set(at+"[type]", "text")
+		f.Set(at+"[label][type]", "custom")
+		f.Set(at+"[label][custom]", cf.Label)
+		if cf.Optional {
+			f.Set(at+"[optional]", "true")
+		}
+		if cf.MaxLength > 0 {
+			f.Set(at+"[text][maximum_length]", strconv.Itoa(cf.MaxLength))
+		}
 	}
 
 	// The project's mark, which is the first thing verification looks at.

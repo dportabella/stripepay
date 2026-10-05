@@ -2,6 +2,7 @@ package stripepay
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -271,5 +272,75 @@ func TestRefundSendsAmountOnlyWhenPartial(t *testing.T) {
 
 	if _, err := c.Refund(context.Background(), RefundParams{}); err == nil {
 		t.Error("without a payment_intent it should fail")
+	}
+}
+
+// A custom field is the only way to ask the buyer something Stripe does not ask for by
+// itself. The answer has to come back from the paid session, or asking was pointless.
+func TestCustomFieldsAreAskedAndReadBack(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"cs_test_1","url":"https://checkout.stripe.com/x"}`)
+	c := f.client(t, "shop")
+
+	p := goodParams()
+	p.CustomFields = []CustomField{
+		{Key: "billingaddress", Label: "Billing address (only if you want an invoice)",
+			Optional: true, MaxLength: 200},
+	}
+	if _, err := c.CreateSession(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{
+		"custom_fields[0][key]":                  "billingaddress",
+		"custom_fields[0][type]":                 "text",
+		"custom_fields[0][label][type]":          "custom",
+		"custom_fields[0][label][custom]":        "Billing address (only if you want an invoice)",
+		"custom_fields[0][optional]":             "true",
+		"custom_fields[0][text][maximum_length]": "200",
+	} {
+		if got := f.form.Get(k); got != want {
+			t.Errorf("%s = %q, wanted %q", k, got, want)
+		}
+	}
+
+	var s Session
+	if err := json.Unmarshal([]byte(`{"id":"cs_1","custom_fields":[
+		{"key":"billingaddress","text":{"value":"  Carrer Gran 1, 08000 Vila  "}}]}`), &s); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.CustomField("billingaddress"); got != "Carrer Gran 1, 08000 Vila" {
+		t.Errorf("answer = %q", got)
+	}
+	if got := s.CustomField("nothing"); got != "" {
+		t.Errorf("a field nobody asked for = %q, wanted empty", got)
+	}
+}
+
+// Three is Stripe's limit, and a field without a key could never be read back: both are
+// said here and not discovered as a 400 from Stripe with a payment page already open.
+func TestCustomFieldsThatStripeWouldRefuse(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"cs_test_1"}`)
+	c := f.client(t, "shop")
+
+	four := goodParams()
+	for i := 0; i < 4; i++ {
+		four.CustomFields = append(four.CustomFields, CustomField{Key: string(rune('a' + i)), Label: "x"})
+	}
+	if _, err := c.CreateSession(context.Background(), four); err == nil {
+		t.Error("four custom fields should not be sent")
+	}
+	noKey := goodParams()
+	noKey.CustomFields = []CustomField{{Label: "Billing address"}}
+	if _, err := c.CreateSession(context.Background(), noKey); err == nil {
+		t.Error("a custom field without a key should not be sent")
+	}
+	noLabel := goodParams()
+	noLabel.CustomFields = []CustomField{{Key: "billingaddress"}}
+	if _, err := c.CreateSession(context.Background(), noLabel); err == nil {
+		t.Error("a custom field without a label should not be sent")
+	}
+	twice := goodParams()
+	twice.CustomFields = []CustomField{{Key: "a", Label: "x"}, {Key: "a", Label: "y"}}
+	if _, err := c.CreateSession(context.Background(), twice); err == nil {
+		t.Error("two custom fields with the same key should not be sent")
 	}
 }
