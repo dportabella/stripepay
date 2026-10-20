@@ -17,7 +17,7 @@ import (
 //   - [ErrDeferred] is a session Stripe closed without the money being there. It is never
 //     accepted, and it is worth looking into: it means a deferred payment method has been
 //     enabled on the Stripe dashboard.
-//   - The rest — [ErrNotPayment], [ErrReference], [ErrCurrency], [ErrAmount],
+//   - The rest — [ErrNotPayment], [ErrNotSubscription], [ErrReference], [ErrCurrency], [ErrAmount],
 //     [ErrNoPaymentRequired] — are YOUR OWN sessions that do not add up. Nothing is
 //     delivered and somebody has to be told: either it is a bug of yours, or somebody is
 //     playing with you.
@@ -27,6 +27,7 @@ var (
 	ErrExpired           = errors.New("the session expired without being paid")
 	ErrDeferred          = errors.New("deferred payment: the session closed without the money being there")
 	ErrNotPayment        = errors.New("the session is not a one-off payment")
+	ErrNotSubscription   = errors.New("the session is not a subscription")
 	ErrReference         = errors.New("the session's reference is not the one expected")
 	ErrCurrency          = errors.New("the currency is not the one expected")
 	ErrAmount            = errors.New("less money came in than was meant to be charged")
@@ -68,6 +69,12 @@ type Expectation struct {
 	// MinNetCents is the least that must have come in, net of tax. Normally the price you
 	// advertised. Zero means do not check the amount.
 	MinNetCents int64
+	// Subscription says the session must be a subscription (created with
+	// [SessionParams.Recurring]). The default, false, only accepts one-off payments: a
+	// project that never sells subscriptions is not affected by their existence. For a
+	// subscription, MinNetCents is the price of the first period, which is what the session
+	// charges; the later periods are checked with [Client.CheckInvoice].
+	Subscription bool
 }
 
 // IsOurs reports whether this session was created by this project.
@@ -100,7 +107,14 @@ func (c *Client) Check(s *Session, e Expectation) error {
 		return reject(s, ErrForeign, "metadata[%s] = %q, and we are %q",
 			MetadataService, s.Metadata[MetadataService], c.service)
 	}
-	if s.Mode != "payment" {
+	if e.Subscription {
+		if s.Mode != "subscription" {
+			return reject(s, ErrNotSubscription, "mode = %q", s.Mode)
+		}
+		if s.Subscription == "" {
+			return reject(s, ErrNotSubscription, "the session carries no subscription")
+		}
+	} else if s.Mode != "payment" {
 		return reject(s, ErrNotPayment, "mode = %q", s.Mode)
 	}
 	if e.Reference == "" {

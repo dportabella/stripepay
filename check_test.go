@@ -17,6 +17,7 @@ var verdicts = map[string]error{
 	"expired":             ErrExpired,
 	"deferred":            ErrDeferred,
 	"not-payment":         ErrNotPayment,
+	"not-subscription":    ErrNotSubscription,
 	"reference":           ErrReference,
 	"currency":            ErrCurrency,
 	"amount":              ErrAmount,
@@ -29,9 +30,10 @@ type vector struct {
 	Service string  `json:"service"`
 	Session Session `json:"session"`
 	Expect  struct {
-		Reference   string `json:"reference"`
-		Currency    string `json:"currency"`
-		MinNetCents int64  `json:"min_net_cents"`
+		Reference    string `json:"reference"`
+		Currency     string `json:"currency"`
+		MinNetCents  int64  `json:"min_net_cents"`
+		Subscription bool   `json:"subscription"`
 	} `json:"expect"`
 	Want string `json:"want"`
 }
@@ -65,9 +67,10 @@ func TestCheckAgainstVectors(t *testing.T) {
 			}
 			s := v.Session
 			got := c.Check(&s, Expectation{
-				Reference:   v.Expect.Reference,
-				Currency:    v.Expect.Currency,
-				MinNetCents: v.Expect.MinNetCents,
+				Reference:    v.Expect.Reference,
+				Currency:     v.Expect.Currency,
+				MinNetCents:  v.Expect.MinNetCents,
+				Subscription: v.Expect.Subscription,
 			})
 			if want == nil {
 				if got != nil {

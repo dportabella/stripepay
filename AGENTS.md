@@ -27,7 +27,8 @@ Test names are sentences saying what must happen, not which function they touch
    on verify).
 6. **`ErrForeign` is not an error anybody is alerted about.** Any refactor of the error
    handling that puts it in the same bucket as `ErrAmount` reopens the false-alarm hole.
-7. **No business logic here**: no VAT, no invoices, no deciding what gets delivered. See the
+7. **Subscriptions carry the mark and the reference on the subscription itself** (`subscription_data[metadata]`), and the `invoice.*` and `customer.subscription.*` events are re-read from the API before the project sees them. A change that hands the project an unchecked payload reopens the neighbour hole.
+8. **No business logic here**: no VAT, no invoices, no deciding what gets delivered. See the
    last section of the README.
 
 ## The test vectors are the contract

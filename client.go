@@ -172,3 +172,7 @@ func (c *Client) get(ctx context.Context, path string, out any) error {
 func (c *Client) post(ctx context.Context, path string, form url.Values, idem string, out any) error {
 	return c.do(ctx, http.MethodPost, path, form, idem, out)
 }
+
+func (c *Client) delete(ctx context.Context, path string, form url.Values, out any) error {
+	return c.do(ctx, http.MethodDelete, path, form, "", out)
+}

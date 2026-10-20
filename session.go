@@ -105,9 +105,25 @@ type SessionParams struct {
 	// CustomFields are extra questions on the payment page, up to three (Stripe's limit).
 	CustomFields []CustomField
 
+	// Recurring turns the session into a SUBSCRIPTION: AmountCents is then the price of one
+	// period, charged now and again at the end of each period until it is cancelled. Nil
+	// means a one-off payment. See [Recurring] and the README, "Subscriptions".
+	Recurring *Recurring
+
 	// Metadata is whatever the project wants recorded on the session. The "service" key is
-	// reserved: the client fills it in from its [Options.Service].
+	// reserved: the client fills it in from its [Options.Service]. With Recurring it is
+	// recorded on the subscription as well, because that is the object the later events
+	// (`invoice.paid`, `customer.subscription.deleted`…) carry.
 	Metadata map[string]string
+}
+
+// Recurring is how often a subscription charges.
+type Recurring struct {
+	// Interval is "day", "week", "month" or "year".
+	Interval string
+	// Count is the number of intervals between charges: 3 with "month" is quarterly. Zero
+	// means 1.
+	Count int
 }
 
 // CustomField is one extra question asked on the payment page, for what only the buyer can
@@ -166,17 +182,21 @@ type CustomerDetails struct {
 // Only the fields that are used to verify it, or to deliver what was sold, are here.
 // Adding one is cheap; reading all of them buys nothing.
 type Session struct {
-	ID                string            `json:"id"`
-	URL               string            `json:"url"`
-	Mode              string            `json:"mode"`           // must be "payment"
-	Status            string            `json:"status"`         // open | complete | expired
-	PaymentStatus     string            `json:"payment_status"` // paid | unpaid | no_payment_required
-	AmountTotal       int64             `json:"amount_total"`
-	Currency          string            `json:"currency"`
-	ClientReferenceID string            `json:"client_reference_id"`
-	PaymentIntent     string            `json:"payment_intent"`
-	Metadata          map[string]string `json:"metadata"`
-	TotalDetails      struct {
+	ID                string `json:"id"`
+	URL               string `json:"url"`
+	Mode              string `json:"mode"`           // "payment", or "subscription"
+	Status            string `json:"status"`         // open | complete | expired
+	PaymentStatus     string `json:"payment_status"` // paid | unpaid | no_payment_required
+	AmountTotal       int64  `json:"amount_total"`
+	Currency          string `json:"currency"`
+	ClientReferenceID string `json:"client_reference_id"`
+	PaymentIntent     string `json:"payment_intent"`
+	// Subscription is the id (`sub_…`) of the subscription a session in mode "subscription"
+	// created, and Customer the Stripe customer that owns it.
+	Subscription string            `json:"subscription"`
+	Customer     string            `json:"customer"`
+	Metadata     map[string]string `json:"metadata"`
+	TotalDetails struct {
 		AmountTax int64 `json:"amount_tax"`
 	} `json:"total_details"`
 	CustomerDetails *CustomerDetails `json:"customer_details"`
@@ -300,12 +320,28 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 		}
 		seen[cf.Key] = true
 	}
+	if p.Recurring != nil {
+		switch p.Recurring.Interval {
+		case "day", "week", "month", "year":
+		default:
+			return nil, fmt.Errorf("stripepay: Recurring.Interval has to be day, week, month or year, and it is %q", p.Recurring.Interval)
+		}
+		if p.Recurring.Count < 0 || p.Recurring.Count > 52 {
+			return nil, fmt.Errorf("stripepay: Recurring.Count has to be between 1 and 52 (it is %d)", p.Recurring.Count)
+		}
+		if p.CreateInvoice {
+			return nil, fmt.Errorf("stripepay: CreateInvoice does not apply to a subscription: Stripe makes an invoice for every period")
+		}
+	}
 	if _, reserved := p.Metadata[MetadataService]; reserved {
 		return nil, fmt.Errorf("stripepay: the %q metadata key is set by the client, not by the project", MetadataService)
 	}
 
 	f := url.Values{}
 	f.Set("mode", "payment")
+	if p.Recurring != nil {
+		f.Set("mode", "subscription")
+	}
 	f.Set("success_url", p.SuccessURL)
 	if p.CancelURL != "" {
 		f.Set("cancel_url", p.CancelURL)
@@ -328,6 +364,12 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 	if p.TaxBehavior != "" {
 		f.Set("line_items[0][price_data][tax_behavior]", string(p.TaxBehavior))
 	}
+	if p.Recurring != nil {
+		f.Set("line_items[0][price_data][recurring][interval]", p.Recurring.Interval)
+		if p.Recurring.Count > 1 {
+			f.Set("line_items[0][price_data][recurring][interval_count]", strconv.Itoa(p.Recurring.Count))
+		}
+	}
 
 	if p.AutomaticTax {
 		f.Set("automatic_tax[enabled]", "true")
@@ -341,7 +383,7 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 	if p.CollectBillingAddress {
 		f.Set("billing_address_collection", "required")
 	}
-	if p.CreateCustomer {
+	if p.CreateCustomer && p.Recurring == nil { // a subscription always has a customer, and Stripe refuses the parameter
 		f.Set("customer_creation", "always")
 	}
 	if p.CustomerEmail != "" {
@@ -378,6 +420,15 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 	sort.Strings(keys)
 	for _, k := range keys {
 		f.Set("metadata["+k+"]", p.Metadata[k])
+	}
+	if p.Recurring != nil {
+		// The later events are about the subscription and the invoice, not about this session:
+		// the mark and the reference have to be on the subscription for them to be told apart.
+		f.Set("subscription_data[metadata]["+MetadataService+"]", c.service)
+		f.Set("subscription_data[metadata][reference]", p.Reference)
+		for _, k := range keys {
+			f.Set("subscription_data[metadata]["+k+"]", p.Metadata[k])
+		}
 	}
 
 	idem := p.IdempotencyKey

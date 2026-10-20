@@ -157,6 +157,14 @@ type Handler struct {
 	// session it is nil.
 	On map[string]func(ctx context.Context, ev *Event, s *Session) error
 
+	// OnSubscription are the events about subscriptions this project handles, by type:
+	// normally `invoice.paid`, `invoice.payment_failed`, `customer.subscription.updated` and
+	// `customer.subscription.deleted`. Before calling, the handler re-reads the subscription
+	// (and the invoice, for the `invoice.*` events) from the API and silently drops what
+	// belongs to another project, as it does for a session. An invoice that charges no
+	// subscription is dropped too.
+	OnSubscription map[string]func(ctx context.Context, ev *Event, s *SubscriptionEvent) error
+
 	// OnError is called when one of YOUR OWN events could not be handled. [ErrForeign]
 	// never reaches it: a neighbour's sale is not an incident.
 	OnError func(ctx context.Context, ev *Event, err error)
@@ -228,6 +236,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if sub := h.OnSubscription[ev.Type]; sub != nil {
+		h.serveSubscription(w, r, ev, sub)
+		return
+	}
 	handle := h.On[ev.Type]
 	var sess *Session
 	if strings.HasPrefix(ev.Type, "checkout.session.") {
@@ -275,6 +287,93 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.Background != nil {
+		h.Background("webhook "+ev.Type, work)
+		return
+	}
+	work()
+}
+
+// serveSubscription is the path of an `invoice.*` or `customer.subscription.*` event, after
+// the signature and the claim: drop the neighbour's, answer 200, re-read, call.
+func (h *Handler) serveSubscription(w http.ResponseWriter, r *http.Request, ev *Event, handle func(context.Context, *Event, *SubscriptionEvent) error) {
+	var subID string
+	var inv *Invoice
+	switch {
+	case strings.HasPrefix(ev.Type, "invoice."):
+		i, err := ev.Invoice()
+		if err != nil {
+			h.fail(r.Context(), ev, err)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		inv, subID = i, i.SubscriptionID()
+		if subID == "" {
+			w.WriteHeader(http.StatusOK) // a one-off invoice: not a subscription's
+			return
+		}
+		// The payload often says whose it is, which saves a call for every neighbour's invoice.
+		if md := i.SubscriptionMetadata(); md != nil && md[MetadataService] != h.Client.service {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+	case strings.HasPrefix(ev.Type, "customer.subscription."):
+		s, err := ev.Subscription()
+		if err != nil {
+			h.fail(r.Context(), ev, err)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if !h.Client.IsOurSubscription(s) {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		subID = s.ID
+	default:
+		h.fail(r.Context(), ev, fmt.Errorf("%s is not an event about a subscription", ev.Type))
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+
+	work := func() {
+		timeout := h.WorkTimeout
+		if timeout == 0 {
+			timeout = 30 * time.Second
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		out := &SubscriptionEvent{}
+		if h.Client.Enabled() {
+			sub, err := h.Client.Subscription(ctx, subID)
+			if err != nil {
+				h.fail(ctx, ev, fmt.Errorf("re-reading subscription %s: %w", subID, err))
+				return
+			}
+			if !h.Client.IsOurSubscription(sub) {
+				return // the neighbour's, found out only now: silence
+			}
+			out.Subscription = sub
+			if inv != nil {
+				fresh, err := h.Client.Invoice(ctx, inv.ID)
+				if err != nil {
+					h.fail(ctx, ev, fmt.Errorf("re-reading invoice %s: %w", inv.ID, err))
+					return
+				}
+				out.Invoice = fresh
+			}
+		} else {
+			if inv != nil {
+				out.Invoice = inv
+				out.Subscription = &Subscription{ID: subID, Metadata: inv.SubscriptionMetadata()}
+			} else {
+				out.Subscription, _ = ev.Subscription()
+			}
+		}
+		if err := handle(ctx, ev, out); err != nil {
+			h.fail(ctx, ev, err)
+		}
+	}
 	if h.Background != nil {
 		h.Background("webhook "+ev.Type, work)
 		return

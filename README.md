@@ -130,6 +130,72 @@ projects' events of that mode and rejecting every one of them, because your serv
 knows its signing secret. Disabling rather than deleting keeps the secret alive, so moving
 back is one call and not a new secret.
 
+## Subscriptions
+
+A session with `Recurring` is a **subscription**: `AmountCents` is the price of one period,
+charged now and again at the end of every period until it is cancelled.
+
+```go
+s, err := c.CreateSession(ctx, stripepay.SessionParams{
+    Reference:   plan.ID,
+    Name:        "Backups, every three months",
+    AmountCents: 1900,
+    Currency:    "EUR",
+    TaxBehavior: stripepay.TaxInclusive,
+    Recurring:   &stripepay.Recurring{Interval: "month", Count: 3},
+    SuccessURL:  base + "/paid?session_id=" + stripepay.SessionIDPlaceholder,
+    CancelURL:   base + "/plans/",
+})
+```
+
+**The first period** comes back as `checkout.session.completed`, checked as ever, with
+`Expectation{Subscription: true}` (the default, `false`, still accepts one-off payments only:
+a project that sells none is not affected). The session now carries `Subscription` and
+`Customer`; keep both in your row.
+
+**Every period after that** is an `invoice.paid` event, and the things that go wrong are
+`invoice.payment_failed` (the renewal failed and Stripe will retry), `customer.subscription.updated`
+and `customer.subscription.deleted`. They are not about a session, so they have their own map in
+the handler, which re-reads the subscription and the invoice from the API and silently drops a
+neighbour's, as it does for a session:
+
+```go
+h.OnSubscription = map[string]func(context.Context, *stripepay.Event, *stripepay.SubscriptionEvent) error{
+    "invoice.paid": func(ctx context.Context, ev *stripepay.Event, e *stripepay.SubscriptionEvent) error {
+        row, err := store.ByReference(ctx, e.Subscription.Reference())
+        if err != nil {
+            return err
+        }
+        if err := c.CheckInvoice(e.Invoice, e.Subscription, stripepay.InvoiceExpectation{
+            Reference: row.ID, Currency: row.Currency, MinNetCents: row.PeriodCents,
+        }); err != nil {
+            return err // the same verdicts as Check
+        }
+        return extendUntil(ctx, row, e.Invoice.PaidThrough())
+    },
+    "customer.subscription.deleted": func(ctx context.Context, ev *stripepay.Event, e *stripepay.SubscriptionEvent) error {
+        return endPlan(ctx, e.Subscription.Reference())
+    },
+}
+```
+
+Register those events with `EnsureEndpoint` too. The **mark and the reference are also written
+on the subscription** (`subscription_data[metadata]`), because that is the object these events
+carry: without them there would be no way to tell a neighbour's renewal from yours.
+
+`CancelSubscription` (at the end of the period, or now), `ResumeSubscription` (take back a
+cancellation while the period lasts) and `PortalSession` (Stripe's own page for the customer to
+change the card, see the invoices and cancel; it has to be switched on once in the dashboard,
+in each mode) are the rest. Deferred payment methods stay refused for subscriptions too.
+
+Stripe moved some fields in API version 2025-04-30 (the subscription of an invoice went under
+`parent`, the end of the period under the items, the tax became a list). Nothing is pinned
+here, so both shapes are read: use `Invoice.SubscriptionID()`, `Invoice.NetCents()`,
+`Subscription.PeriodEnd()`.
+
+What it does not do: dunning (what to do while a renewal is `past_due`), proration, trials,
+coupons, how long to wait before ending access. Those are the application's decisions.
+
 ## The verdicts
 
 `Check` returns `nil` when you may deliver. Otherwise it returns a `*CheckError` wrapping a
@@ -141,7 +207,7 @@ reason, and **the difference between the reasons decides what to do**:
 | `ErrNotPaid` | The session is open: it is being paid. | Nothing. It will arrive. |
 | `ErrExpired` | It expired without being paid. | Nothing. |
 | `ErrDeferred` | Stripe closed the session without the money being there. | Do not deliver, and look into it: a deferred payment method has been enabled on the dashboard. |
-| `ErrNotPayment`, `ErrReference`, `ErrCurrency`, `ErrAmount`, `ErrNoPaymentRequired` | One of **your own** sessions that does not add up. | Do not deliver, and **alert**: either it is your bug, or somebody is playing with you. |
+| `ErrNotPayment`, `ErrNotSubscription`, `ErrReference`, `ErrCurrency`, `ErrAmount`, `ErrNoPaymentRequired` | One of **your own** sessions that does not add up. | Do not deliver, and **alert**: either it is your bug, or somebody is playing with you. |
 
 ```go
 var bad *stripepay.CheckError
@@ -194,7 +260,7 @@ outside your repository.
   is not exactly the one it expects. That forces you to pin an `api_version` when you
   register the endpoint and to keep it in step with the library. Nothing is pinned here: we
   read the fields we ask for and Stripe's forward compatibility is enough.
-- The surface most applications use is five calls. The official library's dependency tree,
+- The surface most applications use is five calls (a few more with subscriptions). The official library's dependency tree,
   for five calls, does not pay for itself.
 
 **Stripe Tax is off by default.** `automatic_tax` is what switches it on, and it costs 0.5 %
