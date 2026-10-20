@@ -635,5 +635,184 @@
         "service": "shop"
       }
     }
+  },
+  {
+    "name": "a subscription that starts after a trial",
+    "comment": "Nothing is charged now; the first charge is at trial_end. Accepted only when the caller says Trial.",
+    "service": "shop",
+    "expect": {
+      "reference": "sub_ref",
+      "currency": "EUR",
+      "min_net_cents": 1900,
+      "subscription": true,
+      "trial": true
+    },
+    "want": "ok",
+    "session": {
+      "id": "cs_live_trial",
+      "mode": "subscription",
+      "status": "complete",
+      "payment_status": "no_payment_required",
+      "amount_total": 0,
+      "currency": "eur",
+      "client_reference_id": "sub_ref",
+      "subscription": "sub_1",
+      "customer": "cus_1",
+      "total_details": {
+        "amount_tax": 0
+      },
+      "metadata": {
+        "service": "shop"
+      }
+    }
+  },
+  {
+    "name": "a trial subscription when no trial was expected",
+    "comment": "Without Trial a session that charged nothing is still a gift.",
+    "service": "shop",
+    "expect": {
+      "reference": "sub_ref",
+      "currency": "EUR",
+      "min_net_cents": 1900,
+      "subscription": true
+    },
+    "want": "no-payment-required",
+    "session": {
+      "id": "cs_live_trial",
+      "mode": "subscription",
+      "status": "complete",
+      "payment_status": "no_payment_required",
+      "amount_total": 0,
+      "currency": "eur",
+      "client_reference_id": "sub_ref",
+      "subscription": "sub_1",
+      "customer": "cus_1",
+      "total_details": {
+        "amount_tax": 0
+      },
+      "metadata": {
+        "service": "shop"
+      }
+    }
+  },
+  {
+    "name": "a trial for a one-off payment",
+    "comment": "Trial only exists with Subscription: a one-off payment that charged nothing is a gift.",
+    "service": "shop",
+    "expect": {
+      "reference": "sub_ref",
+      "currency": "EUR",
+      "min_net_cents": 1900,
+      "subscription": false,
+      "trial": true
+    },
+    "want": "no-payment-required",
+    "session": {
+      "id": "cs_live_trial",
+      "mode": "payment",
+      "status": "complete",
+      "payment_status": "no_payment_required",
+      "amount_total": 0,
+      "currency": "eur",
+      "client_reference_id": "sub_ref",
+      "subscription": "",
+      "customer": "cus_1",
+      "total_details": {
+        "amount_tax": 0
+      },
+      "metadata": {
+        "service": "shop"
+      }
+    }
+  },
+  {
+    "name": "a trial in another currency",
+    "comment": "Even with nothing charged the currency is the one expected.",
+    "service": "shop",
+    "expect": {
+      "reference": "sub_ref",
+      "currency": "EUR",
+      "min_net_cents": 1900,
+      "subscription": true,
+      "trial": true
+    },
+    "want": "currency",
+    "session": {
+      "id": "cs_live_trial",
+      "mode": "subscription",
+      "status": "complete",
+      "payment_status": "no_payment_required",
+      "amount_total": 0,
+      "currency": "usd",
+      "client_reference_id": "sub_ref",
+      "subscription": "sub_1",
+      "customer": "cus_1",
+      "total_details": {
+        "amount_tax": 0
+      },
+      "metadata": {
+        "service": "shop"
+      }
+    }
+  },
+  {
+    "name": "a trial session that is still open",
+    "comment": "Not complete: the card has not been taken.",
+    "service": "shop",
+    "expect": {
+      "reference": "sub_ref",
+      "currency": "EUR",
+      "min_net_cents": 1900,
+      "subscription": true,
+      "trial": true
+    },
+    "want": "no-payment-required",
+    "session": {
+      "id": "cs_live_trial",
+      "mode": "subscription",
+      "status": "open",
+      "payment_status": "no_payment_required",
+      "amount_total": 0,
+      "currency": "eur",
+      "client_reference_id": "sub_ref",
+      "subscription": "sub_1",
+      "customer": "cus_1",
+      "total_details": {
+        "amount_tax": 0
+      },
+      "metadata": {
+        "service": "shop"
+      }
+    }
+  },
+  {
+    "name": "a subscription paid now and starting its renewals later",
+    "comment": "The first period is an upfront charge; the amount is compared as ever.",
+    "service": "shop",
+    "expect": {
+      "reference": "sub_ref",
+      "currency": "EUR",
+      "min_net_cents": 1900,
+      "subscription": true,
+      "trial": true
+    },
+    "want": "ok",
+    "session": {
+      "id": "cs_live_trial",
+      "mode": "subscription",
+      "status": "complete",
+      "payment_status": "paid",
+      "amount_total": 1900,
+      "currency": "eur",
+      "client_reference_id": "sub_ref",
+      "subscription": "sub_1",
+      "customer": "cus_1",
+      "total_details": {
+        "amount_tax": 0
+      },
+      "metadata": {
+        "service": "shop"
+      }
+    }
   }
 ]

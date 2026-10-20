@@ -75,6 +75,10 @@ type Expectation struct {
 	// subscription, MinNetCents is the price of the first period, which is what the session
 	// charges; the later periods are checked with [Client.CheckInvoice].
 	Subscription bool
+	// Trial accepts a subscription session that charged nothing now (`no_payment_required`) because its first charge is
+	// at [Recurring.TrialEnd]. Only with Subscription. MinNetCents is then not compared: nothing came in yet; the first
+	// charge is checked with [Client.CheckInvoice].
+	Trial bool
 }
 
 // IsOurs reports whether this session was created by this project.
@@ -130,8 +134,15 @@ func (c *Client) Check(s *Session, e Expectation) error {
 		// Go ahead.
 	case "no_payment_required":
 		// A legitimate state in other contexts, but here it would mean something was
-		// given away, which is never what you want.
-		return reject(s, ErrNoPaymentRequired, "status = %q", s.Status)
+		// given away, which is never what you want. The one exception is a subscription
+		// that starts after a trial, when the caller says so.
+		if !(e.Subscription && e.Trial && s.Status == "complete") {
+			return reject(s, ErrNoPaymentRequired, "status = %q", s.Status)
+		}
+		if e.Currency != "" && !strings.EqualFold(s.Currency, e.Currency) {
+			return reject(s, ErrCurrency, "%q, expected %q", s.Currency, e.Currency)
+		}
+		return nil
 	case "unpaid":
 		switch s.Status {
 		case "expired":

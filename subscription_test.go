@@ -272,3 +272,68 @@ func TestACancelledSubscriptionReachesTheProject(t *testing.T) {
 		t.Fatalf("got %d, errs %v", len(p.got), p.errs)
 	}
 }
+
+func TestATrialSubscriptionWithAnUpfrontChargeIsSentAsOne(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"cs_test_1","mode":"subscription"}`)
+	c := f.client(t, "shop")
+	p := subscriptionParams()
+	p.Recurring = &Recurring{Interval: "month", Count: 3, TrialEnd: time.Now().Add(10 * 24 * time.Hour), UpfrontCents: 1900}
+	p.TaxBehavior = TaxInclusive
+	if _, err := c.CreateSession(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{
+		"subscription_data[trial_end]":                   f.form.Get("subscription_data[trial_end]"),
+		"payment_method_collection":                      "always",
+		"line_items[0][price_data][recurring][interval]": "month",
+		"line_items[1][price_data][unit_amount]":         "1900",
+		"line_items[1][price_data][tax_behavior]":        "inclusive",
+		"line_items[1][quantity]":                        "1",
+	} {
+		if got := f.form.Get(k); got != want || got == "" {
+			t.Errorf("%s = %q, want %q", k, got, want)
+		}
+	}
+	if f.form.Has("line_items[1][price_data][recurring][interval]") {
+		t.Error("the upfront charge is a one-off line")
+	}
+}
+
+func TestBadTrialsAreRefusedBeforeStripeIsCalled(t *testing.T) {
+	f := newFakeStripe(t, `{}`)
+	c := f.client(t, "shop")
+	for name, rec := range map[string]*Recurring{
+		"too soon":                {Interval: "month", TrialEnd: time.Now().Add(24 * time.Hour)},
+		"too far":                 {Interval: "month", TrialEnd: time.Now().Add(3 * 365 * 24 * time.Hour)},
+		"upfront without a trial": {Interval: "month", UpfrontCents: 1900},
+		"negative upfront":        {Interval: "month", TrialEnd: time.Now().Add(10 * 24 * time.Hour), UpfrontCents: -1},
+	} {
+		p := subscriptionParams()
+		p.Recurring = rec
+		if _, err := c.CreateSession(context.Background(), p); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+	if f.path != "" {
+		t.Fatalf("Stripe was called: %s", f.path)
+	}
+}
+
+func TestAddInvoiceItem(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"ii_1"}`)
+	c := f.client(t, "shop")
+	err := c.AddInvoiceItem(context.Background(), AddInvoiceItemParams{Customer: "cus_1", Invoice: "in_1", AmountCents: -500, Currency: "EUR", Description: "adjustment", IdempotencyKey: "k1"})
+	if err != nil || f.path != "/v1/invoiceitems" || f.form.Get("invoice") != "in_1" || f.form.Get("amount") != "-500" || f.form.Get("currency") != "eur" ||
+		f.form.Get("customer") != "cus_1" || f.header.Get("Idempotency-Key") != "k1" || f.form.Get("metadata[service]") != "shop" {
+		t.Fatalf("%v %s %v %v", err, f.path, f.form, f.header)
+	}
+	for name, p := range map[string]AddInvoiceItemParams{
+		"nothing to add": {Customer: "c", Invoice: "i", Currency: "EUR", IdempotencyKey: "k"},
+		"no key":         {Customer: "c", Invoice: "i", Currency: "EUR", AmountCents: 1},
+		"no invoice":     {Customer: "c", Currency: "EUR", AmountCents: 1, IdempotencyKey: "k"},
+	} {
+		if err := c.AddInvoiceItem(context.Background(), p); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+}

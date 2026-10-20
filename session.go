@@ -124,6 +124,16 @@ type Recurring struct {
 	// Count is the number of intervals between charges: 3 with "month" is quarterly. Zero
 	// means 1.
 	Count int
+
+	// TrialEnd delays the first charge of the subscription until this moment: the card is taken now and nothing is
+	// charged until then, when the renewals begin to follow the same date (so a fixed day of the month is a TrialEnd on that
+	// day). Stripe asks for at least 48 hours from now, and no more than two years. Zero means the first period is charged now.
+	// With a TrialEnd the session ends "no_payment_required" unless there is an UpfrontCents: see [Expectation.Trial].
+	TrialEnd time.Time
+
+	// UpfrontCents, only with TrialEnd, is a one-off charge made now, with the card, besides the recurring price: the first
+	// period paid at once while the renewals wait for TrialEnd. Zero charges nothing now.
+	UpfrontCents int64
 }
 
 // CustomField is one extra question asked on the payment page, for what only the buyer can
@@ -332,6 +342,14 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 		if p.CreateInvoice {
 			return nil, fmt.Errorf("stripepay: CreateInvoice does not apply to a subscription: Stripe makes an invoice for every period")
 		}
+		if !p.Recurring.TrialEnd.IsZero() {
+			if d := time.Until(p.Recurring.TrialEnd); d < 48*time.Hour+time.Minute || d > 2*365*24*time.Hour {
+				return nil, fmt.Errorf("stripepay: Recurring.TrialEnd has to be between 48 hours and two years from now (it is %s from now)", d.Round(time.Minute))
+			}
+		}
+		if p.Recurring.UpfrontCents < 0 || (p.Recurring.UpfrontCents > 0 && p.Recurring.TrialEnd.IsZero()) {
+			return nil, fmt.Errorf("stripepay: Recurring.UpfrontCents is only for a subscription with a TrialEnd: without it the first period is charged now anyway")
+		}
 	}
 	if _, reserved := p.Metadata[MetadataService]; reserved {
 		return nil, fmt.Errorf("stripepay: the %q metadata key is set by the client, not by the project", MetadataService)
@@ -368,6 +386,19 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 		f.Set("line_items[0][price_data][recurring][interval]", p.Recurring.Interval)
 		if p.Recurring.Count > 1 {
 			f.Set("line_items[0][price_data][recurring][interval_count]", strconv.Itoa(p.Recurring.Count))
+		}
+		if p.Recurring.UpfrontCents > 0 {
+			f.Set("line_items[1][quantity]", "1")
+			f.Set("line_items[1][price_data][currency]", strings.ToLower(p.Currency))
+			f.Set("line_items[1][price_data][unit_amount]", strconv.FormatInt(p.Recurring.UpfrontCents, 10))
+			f.Set("line_items[1][price_data][product_data][name]", p.Name)
+			if p.TaxBehavior != "" {
+				f.Set("line_items[1][price_data][tax_behavior]", string(p.TaxBehavior))
+			}
+		}
+		if !p.Recurring.TrialEnd.IsZero() {
+			f.Set("subscription_data[trial_end]", strconv.FormatInt(p.Recurring.TrialEnd.Unix(), 10))
+			f.Set("payment_method_collection", "always")
 		}
 	}
 

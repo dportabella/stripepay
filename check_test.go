@@ -34,6 +34,7 @@ type vector struct {
 		Currency     string `json:"currency"`
 		MinNetCents  int64  `json:"min_net_cents"`
 		Subscription bool   `json:"subscription"`
+		Trial        bool   `json:"trial"`
 	} `json:"expect"`
 	Want string `json:"want"`
 }
@@ -71,6 +72,7 @@ func TestCheckAgainstVectors(t *testing.T) {
 				Currency:     v.Expect.Currency,
 				MinNetCents:  v.Expect.MinNetCents,
 				Subscription: v.Expect.Subscription,
+				Trial:        v.Expect.Trial,
 			})
 			if want == nil {
 				if got != nil {

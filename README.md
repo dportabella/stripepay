@@ -193,6 +193,15 @@ Stripe moved some fields in API version 2025-04-30 (the subscription of an invoi
 here, so both shapes are read: use `Invoice.SubscriptionID()`, `Invoice.NetCents()`,
 `Subscription.PeriodEnd()`.
 
+**An amount that changes, and a first charge on a day of your choice.** `Recurring.TrialEnd` takes the card now and
+starts the charges at that date, and every renewal follows the same date, so "the 1st of the month" is a `TrialEnd` on the 1st.
+`Recurring.UpfrontCents` charges the first period now besides: the session is then paid for that amount and the renewals wait.
+With only a `TrialEnd` the session ends `no_payment_required`, which `Check` accepts only when you say
+`Expectation{Subscription: true, Trial: true}`. For an amount that varies from one period to the next, give the subscription a
+base price and, when `invoice.created` announces a renewal (a draft for about an hour), add the difference with
+`AddInvoiceItem` (negative to charge less); then check the paid invoice against what you meant to charge that time. Subscribe the
+endpoint to `invoice.created` as well.
+
 What it does not do: dunning (what to do while a renewal is `past_due`), proration, trials,
 coupons, how long to wait before ending access. Those are the application's decisions.
 

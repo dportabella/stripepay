@@ -299,3 +299,36 @@ func (c *Client) CheckInvoice(inv *Invoice, sub *Subscription, e InvoiceExpectat
 	}
 	return nil
 }
+
+// AddInvoiceItemParams is a line added to an invoice that is still a draft.
+type AddInvoiceItemParams struct {
+	Customer string
+	Invoice  string
+	// AmountCents may be negative: a discount, or a correction to what the subscription's price says.
+	AmountCents int64
+	Currency    string
+	Description string
+	// IdempotencyKey stops a redelivery of the event from adding the line twice. Required.
+	IdempotencyKey string
+}
+
+// AddInvoiceItem adds a line to a draft invoice. It is how a subscription whose amount varies from one period to the next is
+// charged: the subscription carries a base price, and when `invoice.created` announces the next invoice (which stays a
+// draft for about an hour) the project adds the difference between the base and what this period costs.
+func (c *Client) AddInvoiceItem(ctx context.Context, p AddInvoiceItemParams) error {
+	if !c.Enabled() {
+		return fmt.Errorf("stripepay: this client has no key")
+	}
+	if p.Customer == "" || p.Invoice == "" || p.Currency == "" || p.IdempotencyKey == "" {
+		return fmt.Errorf("stripepay: the customer, the invoice, the currency and an idempotency key are required")
+	}
+	if p.AmountCents == 0 {
+		return fmt.Errorf("stripepay: a line of 0 is no use; do not add it")
+	}
+	f := url.Values{"customer": {p.Customer}, "invoice": {p.Invoice}, "currency": {strings.ToLower(p.Currency)},
+		"amount": {fmt.Sprint(p.AmountCents)}, "metadata[" + MetadataService + "]": {c.service}}
+	if p.Description != "" {
+		f.Set("description", p.Description)
+	}
+	return c.post(ctx, "/v1/invoiceitems", f, p.IdempotencyKey, nil)
+}
