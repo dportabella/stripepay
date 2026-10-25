@@ -110,6 +110,17 @@ type SessionParams struct {
 	// means a one-off payment. See [Recurring] and the README, "Subscriptions".
 	Recurring *Recurring
 
+	// PriceID, when set, charges an existing Stripe Price (`price_…`) instead of an inline price: the Product and
+	// the Price then live in the dashboard under your control (lookup keys, reporting). Name, AmountCents,
+	// Currency, TaxBehavior and TaxCode are not sent in that case; AmountCents and Currency are still required
+	// (they are what you expect to be charged, and what a test compares). The Price has to be recurring exactly
+	// when Recurring is set, and Stripe refuses the session otherwise.
+	PriceID string
+
+	// CouponID applies an existing Stripe coupon (`coupon_id`) to the session. Its limits (redemptions, validity)
+	// are Stripe's. Check does not know about it: expect the discounted amount in [Expectation.MinNetCents].
+	CouponID string
+
 	// Metadata is whatever the project wants recorded on the session. The "service" key is
 	// reserved: the client fills it in from its [Options.Service]. With Recurring it is
 	// recorded on the subscription as well, because that is the object the later events
@@ -289,7 +300,7 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 	if p.Currency == "" {
 		return nil, fmt.Errorf("stripepay: SessionParams.Currency is required")
 	}
-	if p.Name == "" {
+	if p.Name == "" && p.PriceID == "" {
 		return nil, fmt.Errorf("stripepay: SessionParams.Name is required: it is what the buyer will read")
 	}
 	if !strings.Contains(p.SuccessURL, SessionIDPlaceholder) {
@@ -370,36 +381,46 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 	}
 
 	f.Set("line_items[0][quantity]", "1")
-	f.Set("line_items[0][price_data][currency]", strings.ToLower(p.Currency))
-	f.Set("line_items[0][price_data][unit_amount]", strconv.FormatInt(p.AmountCents, 10))
-	f.Set("line_items[0][price_data][product_data][name]", p.Name)
-	if p.Description != "" {
-		f.Set("line_items[0][price_data][product_data][description]", p.Description)
-	}
-	if p.TaxCode != "" {
-		f.Set("line_items[0][price_data][product_data][tax_code]", p.TaxCode)
-	}
-	if p.TaxBehavior != "" {
-		f.Set("line_items[0][price_data][tax_behavior]", string(p.TaxBehavior))
-	}
-	if p.Recurring != nil {
-		f.Set("line_items[0][price_data][recurring][interval]", p.Recurring.Interval)
-		if p.Recurring.Count > 1 {
-			f.Set("line_items[0][price_data][recurring][interval_count]", strconv.Itoa(p.Recurring.Count))
+	if p.PriceID != "" {
+		f.Set("line_items[0][price]", p.PriceID)
+		if p.Recurring != nil && (!p.Recurring.TrialEnd.IsZero() || p.Recurring.UpfrontCents > 0) {
+			return nil, fmt.Errorf("stripepay: PriceID cannot be combined with Recurring.TrialEnd or UpfrontCents")
 		}
-		if p.Recurring.UpfrontCents > 0 {
-			f.Set("line_items[1][quantity]", "1")
-			f.Set("line_items[1][price_data][currency]", strings.ToLower(p.Currency))
-			f.Set("line_items[1][price_data][unit_amount]", strconv.FormatInt(p.Recurring.UpfrontCents, 10))
-			f.Set("line_items[1][price_data][product_data][name]", p.Name)
-			if p.TaxBehavior != "" {
-				f.Set("line_items[1][price_data][tax_behavior]", string(p.TaxBehavior))
+	} else {
+		f.Set("line_items[0][price_data][currency]", strings.ToLower(p.Currency))
+		f.Set("line_items[0][price_data][unit_amount]", strconv.FormatInt(p.AmountCents, 10))
+		f.Set("line_items[0][price_data][product_data][name]", p.Name)
+		if p.Description != "" {
+			f.Set("line_items[0][price_data][product_data][description]", p.Description)
+		}
+		if p.TaxCode != "" {
+			f.Set("line_items[0][price_data][product_data][tax_code]", p.TaxCode)
+		}
+		if p.TaxBehavior != "" {
+			f.Set("line_items[0][price_data][tax_behavior]", string(p.TaxBehavior))
+		}
+		if p.Recurring != nil {
+			f.Set("line_items[0][price_data][recurring][interval]", p.Recurring.Interval)
+			if p.Recurring.Count > 1 {
+				f.Set("line_items[0][price_data][recurring][interval_count]", strconv.Itoa(p.Recurring.Count))
+			}
+			if p.Recurring.UpfrontCents > 0 {
+				f.Set("line_items[1][quantity]", "1")
+				f.Set("line_items[1][price_data][currency]", strings.ToLower(p.Currency))
+				f.Set("line_items[1][price_data][unit_amount]", strconv.FormatInt(p.Recurring.UpfrontCents, 10))
+				f.Set("line_items[1][price_data][product_data][name]", p.Name)
+				if p.TaxBehavior != "" {
+					f.Set("line_items[1][price_data][tax_behavior]", string(p.TaxBehavior))
+				}
+			}
+			if !p.Recurring.TrialEnd.IsZero() {
+				f.Set("subscription_data[trial_end]", strconv.FormatInt(p.Recurring.TrialEnd.Unix(), 10))
+				f.Set("payment_method_collection", "always")
 			}
 		}
-		if !p.Recurring.TrialEnd.IsZero() {
-			f.Set("subscription_data[trial_end]", strconv.FormatInt(p.Recurring.TrialEnd.Unix(), 10))
-			f.Set("payment_method_collection", "always")
-		}
+	}
+	if p.CouponID != "" {
+		f.Set("discounts[0][coupon]", p.CouponID)
 	}
 
 	if p.AutomaticTax {

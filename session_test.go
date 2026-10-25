@@ -344,3 +344,39 @@ func TestCustomFieldsThatStripeWouldRefuse(t *testing.T) {
 		t.Error("two custom fields with the same key should not be sent")
 	}
 }
+
+func TestCreateSessionWithAnExistingPriceAndCoupon(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"cs_test_1","url":"https://checkout.test/x"}`)
+	c := f.client(t, "shop")
+	p := goodParams()
+	p.PriceID, p.CouponID = "price_123", "FOUNDING"
+	p.Recurring = &Recurring{Interval: "month"}
+	if _, err := c.CreateSession(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.form.Get("line_items[0][price]"); got != "price_123" {
+		t.Errorf("price = %q", got)
+	}
+	if f.form.Get("line_items[0][price_data][unit_amount]") != "" || f.form.Get("line_items[0][price_data][recurring][interval]") != "" {
+		t.Errorf("an existing price must not be sent as an inline one: %v", f.form)
+	}
+	if got := f.form.Get("discounts[0][coupon]"); got != "FOUNDING" {
+		t.Errorf("coupon = %q", got)
+	}
+	if f.form.Get("subscription_data[metadata][reference]") != "ord_7f3a" || f.form.Get("mode") != "subscription" {
+		t.Errorf("the subscription must still carry the reference: %v", f.form)
+	}
+}
+
+func TestCreateSessionPriceIDDoesNotNeedAName(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"cs_test_1"}`)
+	p := goodParams()
+	p.Name, p.PriceID = "", "price_123"
+	if _, err := f.client(t, "shop").CreateSession(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	p.PriceID = ""
+	if _, err := f.client(t, "shop").CreateSession(context.Background(), p); err == nil {
+		t.Fatal("without a PriceID the name is still required")
+	}
+}

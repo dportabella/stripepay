@@ -205,6 +205,12 @@ endpoint to `invoice.created` as well.
 What it does not do: dunning (what to do while a renewal is `past_due`), proration, trials,
 coupons, how long to wait before ending access. Those are the application's decisions.
 
+**Prices and coupons you manage in the dashboard.** `SessionParams.PriceID` charges an existing Stripe Price
+(`price_…`) instead of an inline `price_data`, so the Product and Price are real dashboard objects (lookup keys,
+reporting); `AmountCents` and `Currency` are still given, as what you expect to be charged. `SessionParams.CouponID`
+applies an existing coupon (Stripe enforces its redemption limit); `Check` does not know about it, so pass the
+discounted amount as `Expectation.MinNetCents`.
+
 ## The verdicts
 
 `Check` returns `nil` when you may deliver. Otherwise it returns a `*CheckError` wrapping a
