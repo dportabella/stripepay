@@ -814,5 +814,63 @@
         "service": "shop"
       }
     }
+  },
+  {
+    "name": "an abandoned subscription checkout",
+    "comment": "Still open, never paid: Stripe has not created the subscription, so the session carries none. It is unpaid, not malformed (a sweep must not alert about it).",
+    "service": "shop",
+    "expect": {
+      "reference": "sub_ref",
+      "currency": "EUR",
+      "min_net_cents": 1900,
+      "subscription": true
+    },
+    "want": "not-paid",
+    "session": {
+      "id": "cs_live_sub",
+      "mode": "subscription",
+      "status": "open",
+      "payment_status": "unpaid",
+      "amount_total": 1900,
+      "currency": "eur",
+      "client_reference_id": "sub_ref",
+      "subscription": "",
+      "customer": "",
+      "total_details": {
+        "amount_tax": 0
+      },
+      "metadata": {
+        "service": "shop"
+      }
+    }
+  },
+  {
+    "name": "an expired subscription checkout",
+    "comment": "Expired without payment: no subscription either.",
+    "service": "shop",
+    "expect": {
+      "reference": "sub_ref",
+      "currency": "EUR",
+      "min_net_cents": 1900,
+      "subscription": true
+    },
+    "want": "expired",
+    "session": {
+      "id": "cs_live_sub",
+      "mode": "subscription",
+      "status": "expired",
+      "payment_status": "unpaid",
+      "amount_total": 1900,
+      "currency": "eur",
+      "client_reference_id": "sub_ref",
+      "subscription": "",
+      "customer": "",
+      "total_details": {
+        "amount_tax": 0
+      },
+      "metadata": {
+        "service": "shop"
+      }
+    }
   }
 ]

@@ -115,7 +115,9 @@ func (c *Client) Check(s *Session, e Expectation) error {
 		if s.Mode != "subscription" {
 			return reject(s, ErrNotSubscription, "mode = %q", s.Mode)
 		}
-		if s.Subscription == "" {
+		// A session that is still open or expired has no subscription yet: it is unpaid, not
+		// malformed, and the payment status below says so. Only a completed one must carry it.
+		if s.Subscription == "" && s.Status == "complete" {
 			return reject(s, ErrNotSubscription, "the session carries no subscription")
 		}
 	} else if s.Mode != "payment" {
@@ -157,6 +159,9 @@ func (c *Client) Check(s *Session, e Expectation) error {
 		return reject(s, ErrNotPaid, "payment_status = %q, status = %q", s.PaymentStatus, s.Status)
 	}
 
+	if e.Subscription && s.Subscription == "" {
+		return reject(s, ErrNotSubscription, "the session carries no subscription")
+	}
 	if e.Currency != "" && !strings.EqualFold(s.Currency, e.Currency) {
 		return reject(s, ErrCurrency, "%q, expected %q", s.Currency, e.Currency)
 	}
