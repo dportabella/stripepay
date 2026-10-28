@@ -380,3 +380,48 @@ func TestCreateSessionPriceIDDoesNotNeedAName(t *testing.T) {
 		t.Fatal("without a PriceID the name is still required")
 	}
 }
+
+func TestCustomTextIsSentUnderItsOwnKeys(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"cs_test_1","url":"https://checkout.test/x"}`)
+	c := f.client(t, "shop")
+
+	p := goodParams()
+	p.CustomText = CustomText{Submit: "Questions: [write to us](mailto:a@example.com)", AfterSubmit: "Thanks"}
+	if _, err := c.CreateSession(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.form.Get("custom_text[submit][message]"); got != p.CustomText.Submit {
+		t.Errorf("submit message = %q", got)
+	}
+	if got := f.form.Get("custom_text[after_submit][message]"); got != "Thanks" {
+		t.Errorf("after_submit message = %q", got)
+	}
+	if f.form.Has("custom_text[shipping_address][message]") || f.form.Has("custom_text[terms_of_service_acceptance][message]") {
+		t.Error("an empty message should not be sent")
+	}
+
+	plain := goodParams()
+	if _, err := c.CreateSession(context.Background(), plain); err != nil {
+		t.Fatal(err)
+	}
+	for k := range f.form {
+		if strings.HasPrefix(k, "custom_text") {
+			t.Errorf("a session without custom text sent %s", k)
+		}
+	}
+}
+
+func TestCustomTextLongerThanStripeAllowsIsRefused(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"cs_test_1"}`)
+	c := f.client(t, "shop")
+
+	p := goodParams()
+	p.CustomText.Submit = strings.Repeat("é", CustomTextMaxLength)
+	if _, err := c.CreateSession(context.Background(), p); err != nil {
+		t.Errorf("exactly %d characters should be accepted: %v", CustomTextMaxLength, err)
+	}
+	p.CustomText.TermsOfServiceAcceptance = strings.Repeat("x", CustomTextMaxLength+1)
+	if _, err := c.CreateSession(context.Background(), p); err == nil {
+		t.Error("a message over the limit should not be sent")
+	}
+}

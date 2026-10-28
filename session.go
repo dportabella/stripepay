@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // TaxBehavior says whether the price you write already includes tax or is the net amount.
@@ -105,6 +106,11 @@ type SessionParams struct {
 	// CustomFields are extra questions on the payment page, up to three (Stripe's limit).
 	CustomFields []CustomField
 
+	// CustomText is extra text on the payment page: under the pay button, after it, and so on.
+	// Each message is at most [CustomTextMaxLength] characters and may use Markdown links
+	// and bold. Zero value sends nothing.
+	CustomText CustomText
+
 	// Recurring turns the session into a SUBSCRIPTION: AmountCents is then the price of one
 	// period, charged now and again at the end of each period until it is cancelled. Nil
 	// means a one-off payment. See [Recurring] and the README, "Subscriptions".
@@ -126,6 +132,19 @@ type SessionParams struct {
 	// recorded on the subscription as well, because that is the object the later events
 	// (`invoice.paid`, `customer.subscription.deleted`…) carry.
 	Metadata map[string]string
+}
+
+// CustomTextMaxLength is Stripe's limit for each custom text message, in characters.
+const CustomTextMaxLength = 1200
+
+// CustomText is the text a caller adds to the payment page (`custom_text`). Empty fields
+// are not sent. Stripe supports Markdown (links, bold) in them, and forbids text that
+// contradicts its own Checkout text or its policies.
+type CustomText struct {
+	Submit                   string // under the pay button
+	AfterSubmit              string // below the pay button, after the buyer has submitted
+	ShippingAddress          string // next to the shipping address form
+	TermsOfServiceAcceptance string // next to the terms checkbox
 }
 
 // Recurring is how often a subscription charges.
@@ -325,6 +344,15 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 		return nil, fmt.Errorf("stripepay: Stripe does not accept the locale %q; pass one it does "+
 			"or run it through Locale() first", p.Locale)
 	}
+	for name, msg := range map[string]string{
+		"Submit": p.CustomText.Submit, "AfterSubmit": p.CustomText.AfterSubmit,
+		"ShippingAddress": p.CustomText.ShippingAddress, "TermsOfServiceAcceptance": p.CustomText.TermsOfServiceAcceptance,
+	} {
+		if n := utf8.RuneCountInString(msg); n > CustomTextMaxLength {
+			return nil, fmt.Errorf("stripepay: CustomText.%s has %d characters and Stripe accepts at most %d",
+				name, n, CustomTextMaxLength)
+		}
+	}
 	if len(p.CustomFields) > 3 {
 		return nil, fmt.Errorf("stripepay: Stripe accepts at most 3 custom fields, and %d were given",
 			len(p.CustomFields))
@@ -448,6 +476,14 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 		f.Set("expires_at", strconv.FormatInt(p.ExpiresAt.Unix(), 10))
 	}
 
+	for key, msg := range map[string]string{
+		"submit": p.CustomText.Submit, "after_submit": p.CustomText.AfterSubmit,
+		"shipping_address": p.CustomText.ShippingAddress, "terms_of_service_acceptance": p.CustomText.TermsOfServiceAcceptance,
+	} {
+		if msg != "" {
+			f.Set("custom_text["+key+"][message]", msg)
+		}
+	}
 	for i, cf := range p.CustomFields {
 		at := "custom_fields[" + strconv.Itoa(i) + "]"
 		f.Set(at+"[key]", cf.Key)

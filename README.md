@@ -72,6 +72,16 @@ The label goes out as written: a session is one buyer's payment page, so it is t
 who writes it in the language that page is in (`Locale`). Make them optional unless everyone
 has to answer: a field that only some buyers need blocks the payment of all the others.
 
+**Text on the payment page.** `CustomText` adds a short message under the pay button
+(`Submit`), after it (`AfterSubmit`), by the shipping address or by the terms checkbox. It is
+what to use when the Stripe account's public name is not the name of the product (say who
+sells it and how to reach you). Each message is at most 1,200 characters (checked before the
+call) and Stripe renders Markdown links and bold in it.
+
+```go
+CustomText: stripepay.CustomText{Submit: "Acme is a product of Example Ltd. Questions: help@example.com."},
+```
+
 **Receiving the webhook.** [`Handler`](webhook.go) does the whole path: it reads the body
 without parsing it, checks its signature, claims the event exactly once, silently drops what
 belongs to the neighbour, answers 200 straight away — Stripe waits up to ten seconds for
