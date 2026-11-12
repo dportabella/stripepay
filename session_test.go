@@ -157,6 +157,13 @@ func TestCreateSessionValidations(t *testing.T) {
 			func(p *SessionParams) { p.SuccessURL = "https://example.test/thanks/" }, SessionIDPlaceholder},
 		{"a net price with nobody to add the tax",
 			func(p *SessionParams) { p.TaxBehavior = TaxExclusive }, "without AutomaticTax"},
+		{"a fee without a destination", func(p *SessionParams) { p.ApplicationFeeCents = 540 }, "go together"},
+		{"a destination without a fee", func(p *SessionParams) { p.ConnectedAccount = "acct_1" }, "go together"},
+		{"a destination that is not an account id", func(p *SessionParams) { p.ConnectedAccount, p.ApplicationFeeCents = "sk_x", 540 }, "acct_"},
+		{"a fee as big as the payment", func(p *SessionParams) { p.ConnectedAccount, p.ApplicationFeeCents = "acct_1", 9000 }, "ApplicationFeeCents"},
+		{"a split subscription", func(p *SessionParams) {
+			p.ConnectedAccount, p.ApplicationFeeCents, p.Recurring = "acct_1", 540, &Recurring{Interval: "month"}
+		}, "subscription"},
 		{"trying to set the project mark by hand",
 			func(p *SessionParams) { p.Metadata = map[string]string{MetadataService: "someone-else"} }, "set by the client"},
 	} {
@@ -446,5 +453,43 @@ func TestCollectBusinessNameAddsTheNameCollectionParameter(t *testing.T) {
 	}
 	if got != "true/true" {
 		t.Errorf("name_collection = %q", got)
+	}
+}
+
+func TestCreateSessionSplitsThePaymentWithConnect(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"cs_test_1","url":"https://checkout.stripe.test/x"}`)
+	c := f.client(t, "shop")
+	p := goodParams()
+	p.ConnectedAccount, p.ApplicationFeeCents = "acct_1Abc", 540
+	if _, err := c.CreateSession(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if f.form.Get("payment_intent_data[application_fee_amount]") != "540" ||
+		f.form.Get("payment_intent_data[transfer_data][destination]") != "acct_1Abc" {
+		t.Errorf("the split is not sent: %v", f.form)
+	}
+	if _, err := c.CreateSession(context.Background(), goodParams()); err != nil {
+		t.Fatal(err)
+	}
+	if f.form.Has("payment_intent_data[application_fee_amount]") || f.form.Has("payment_intent_data[transfer_data][destination]") {
+		t.Errorf("a payment that is not split must not carry the fields: %v", f.form)
+	}
+}
+
+func TestRefundOfASplitPaymentReversesTheTransferAndTheFee(t *testing.T) {
+	f := newFakeStripe(t, `{"id":"re_1","amount":100,"currency":"eur","status":"succeeded"}`)
+	c := f.client(t, "shop")
+	if _, err := c.Refund(context.Background(), RefundParams{PaymentIntent: "pi_1", ReverseTransfer: true,
+		RefundApplicationFee: true, IdempotencyKey: "k"}); err != nil {
+		t.Fatal(err)
+	}
+	if f.form.Get("reverse_transfer") != "true" || f.form.Get("refund_application_fee") != "true" {
+		t.Errorf("refund of a split payment: %v", f.form)
+	}
+	if _, err := c.Refund(context.Background(), RefundParams{PaymentIntent: "pi_1", IdempotencyKey: "k2"}); err != nil {
+		t.Fatal(err)
+	}
+	if f.form.Has("reverse_transfer") || f.form.Has("refund_application_fee") {
+		t.Errorf("a plain refund must not carry them: %v", f.form)
 	}
 }

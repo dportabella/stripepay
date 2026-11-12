@@ -130,6 +130,17 @@ type SessionParams struct {
 	// are Stripe's. Check does not know about it: expect the discounted amount in [Expectation.MinNetCents].
 	CouponID string
 
+	// ConnectedAccount (`acct_…`) and ApplicationFeeCents split the payment with Stripe Connect
+	// (destination charge): the whole amount is charged on THIS client's account, ApplicationFeeCents
+	// stays here as the platform's commission and the rest is transferred by Stripe to ConnectedAccount.
+	// Both or neither: a fee without a destination has nobody to be taken from, and a destination
+	// without a fee is a plain transfer nobody asked for. One-off payments only (not Recurring), and
+	// the fee has to be smaller than AmountCents. Refund such a payment with
+	// [RefundParams.ReverseTransfer] and [RefundParams.RefundApplicationFee], or the connected
+	// account keeps the money you gave back.
+	ConnectedAccount    string
+	ApplicationFeeCents int64
+
 	// Metadata is whatever the project wants recorded on the session. The "service" key is
 	// reserved: the client fills it in from its [Options.Service]. With Recurring it is
 	// recorded on the subscription as well, because that is the object the later events
@@ -399,6 +410,21 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 	if _, reserved := p.Metadata[MetadataService]; reserved {
 		return nil, fmt.Errorf("stripepay: the %q metadata key is set by the client, not by the project", MetadataService)
 	}
+	if (p.ConnectedAccount != "") != (p.ApplicationFeeCents != 0) {
+		return nil, fmt.Errorf("stripepay: ConnectedAccount and ApplicationFeeCents go together (account %q, fee %d)",
+			p.ConnectedAccount, p.ApplicationFeeCents)
+	}
+	if p.ConnectedAccount != "" {
+		switch {
+		case !strings.HasPrefix(p.ConnectedAccount, "acct_"):
+			return nil, fmt.Errorf("stripepay: ConnectedAccount has to be an account id (acct_…), and it is %q", p.ConnectedAccount)
+		case p.Recurring != nil:
+			return nil, fmt.Errorf("stripepay: ConnectedAccount does not apply to a subscription (it needs application_fee_percent, which is not supported)")
+		case p.ApplicationFeeCents < 0 || p.ApplicationFeeCents >= p.AmountCents:
+			return nil, fmt.Errorf("stripepay: ApplicationFeeCents has to be between 1 and %d (AmountCents-1), and it is %d",
+				p.AmountCents-1, p.ApplicationFeeCents)
+		}
+	}
 
 	f := url.Values{}
 	f.Set("mode", "payment")
@@ -506,6 +532,11 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 		if cf.MaxLength > 0 {
 			f.Set(at+"[text][maximum_length]", strconv.Itoa(cf.MaxLength))
 		}
+	}
+
+	if p.ConnectedAccount != "" {
+		f.Set("payment_intent_data[application_fee_amount]", strconv.FormatInt(p.ApplicationFeeCents, 10))
+		f.Set("payment_intent_data[transfer_data][destination]", p.ConnectedAccount)
 	}
 
 	// The project's mark, which is the first thing verification looks at.
