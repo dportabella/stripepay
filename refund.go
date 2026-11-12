@@ -56,3 +56,28 @@ func (c *Client) Refund(ctx context.Context, p RefundParams) (*Refund, error) {
 	}
 	return &r, nil
 }
+
+// CardCountry is the issuing country (ISO-2) of the card that paid a PaymentIntent, or "" when it was not a
+// card. It is the second piece of evidence of where a buyer is, next to the billing country, for sales
+// outside the EU (no VAT). It is one extra API call.
+func (c *Client) CardCountry(ctx context.Context, paymentIntent string) (string, error) {
+	if !c.Enabled() {
+		return "", fmt.Errorf("stripepay: this client has no key")
+	}
+	if paymentIntent == "" {
+		return "", fmt.Errorf("stripepay: the payment_intent is required")
+	}
+	var pi struct {
+		LatestCharge struct {
+			PaymentMethodDetails struct {
+				Card struct {
+					Country string `json:"country"`
+				} `json:"card"`
+			} `json:"payment_method_details"`
+		} `json:"latest_charge"`
+	}
+	if err := c.get(ctx, "/v1/payment_intents/"+paymentIntent+"?expand[]=latest_charge", &pi); err != nil {
+		return "", err
+	}
+	return pi.LatestCharge.PaymentMethodDetails.Card.Country, nil
+}

@@ -74,7 +74,10 @@ type SessionParams struct {
 	Locale                string
 	CollectBillingAddress bool // needed to know the country and split the tax yourself
 	CollectTaxID          bool // asks for the VAT number and puts it on the receipt
-	CreateCustomer        bool // creates the Customer even for a one-off payment
+	// CollectBusinessName asks for the company name (optional for the buyer: `name_collection[business]`).
+	// It comes back in [CustomerDetails.BusinessName].
+	CollectBusinessName bool
+	CreateCustomer      bool // creates the Customer even for a one-off payment
 
 	// Where the buyer comes back to. SuccessURL must carry `{CHECKOUT_SESSION_ID}`, which
 	// Stripe substitutes: see [SessionIDPlaceholder].
@@ -211,10 +214,13 @@ type TaxID struct {
 
 // CustomerDetails is who paid, as far as Stripe knows.
 type CustomerDetails struct {
-	Email   string   `json:"email"`
-	Name    string   `json:"name"`
-	Address *Address `json:"address"`
-	TaxIDs  []TaxID  `json:"tax_ids"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+	// BusinessName and IndividualName are the names collected by [SessionParams.CollectBusinessName].
+	BusinessName   string   `json:"business_name"`
+	IndividualName string   `json:"individual_name"`
+	Address        *Address `json:"address"`
+	TaxIDs         []TaxID  `json:"tax_ids"`
 }
 
 // Session is a Checkout Session: the payment page of one particular charge.
@@ -462,6 +468,10 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 	}
 	if p.CollectBillingAddress {
 		f.Set("billing_address_collection", "required")
+	}
+	if p.CollectBusinessName {
+		f.Set("name_collection[business][enabled]", "true")
+		f.Set("name_collection[business][optional]", "true")
 	}
 	if p.CreateCustomer && p.Recurring == nil { // a subscription always has a customer, and Stripe refuses the parameter
 		f.Set("customer_creation", "always")

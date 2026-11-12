@@ -425,3 +425,26 @@ func TestCustomTextLongerThanStripeAllowsIsRefused(t *testing.T) {
 		t.Error("a message over the limit should not be sent")
 	}
 }
+
+func TestCollectBusinessNameAddsTheNameCollectionParameter(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		got = r.PostForm.Get("name_collection[business][enabled]") + "/" + r.PostForm.Get("name_collection[business][optional]")
+		_, _ = w.Write([]byte(`{"id":"cs_x","url":"https://x"}`))
+	}))
+	defer srv.Close()
+	c, err := New(Options{Secret: "sk_test_x", Service: "t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.SetBaseURL(srv.URL)
+	_, err = c.CreateSession(context.Background(), SessionParams{Reference: "r", Name: "n", AmountCents: 100, Currency: "EUR",
+		SuccessURL: "https://ok?s=" + SessionIDPlaceholder, CancelURL: "https://no", CollectBusinessName: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "true/true" {
+		t.Errorf("name_collection = %q", got)
+	}
+}
