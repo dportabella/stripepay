@@ -15,12 +15,9 @@ type RefundParams struct {
 	// is sent. A positive amount is a partial refund, and it can be repeated as long as
 	// the total charged is not exceeded.
 	AmountCents int64
-	// ReverseTransfer takes the money back from the connected account of a destination charge
-	// (see [SessionParams.ConnectedAccount]); RefundApplicationFee gives the platform's
-	// commission back in proportion to the amount refunded. For such a payment both are almost
-	// always wanted: without the first the connected account keeps what was refunded, and the
-	// platform pays it. Both false for a payment that was not split.
-	ReverseTransfer      bool
+	// RefundApplicationFee gives the platform's commission back in proportion to the amount
+	// refunded (a payment with [SessionParams.ApplicationFeeCents]). Without it the platform
+	// keeps its commission on money that went back to the buyer.
 	RefundApplicationFee bool
 	// Reason is recorded in the refund's metadata, so that it is possible to know later
 	// why it was made. It is not Stripe's own `reason` field, which only takes three
@@ -51,9 +48,6 @@ func (c *Client) Refund(ctx context.Context, p RefundParams) (*Refund, error) {
 	f.Set("payment_intent", p.PaymentIntent)
 	if p.AmountCents > 0 {
 		f.Set("amount", strconv.FormatInt(p.AmountCents, 10))
-	}
-	if p.ReverseTransfer {
-		f.Set("reverse_transfer", "true")
 	}
 	if p.RefundApplicationFee {
 		f.Set("refund_application_fee", "true")

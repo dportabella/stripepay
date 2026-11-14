@@ -317,3 +317,29 @@ func TestHandlerRunsTheWorkInTheBackgroundWhenAsked(t *testing.T) {
 		t.Errorf("the background work did not run: %v", p.handled)
 	}
 }
+
+// TestHandlerOnlyTakesTheEventsOfItsOwnAccount: a Connect endpoint delivers the events of every connected account to the
+// same URL. A client acting on acct_A takes acct_A's and is silent about acct_B's (and about the platform's own); a client
+// with no Account takes only events without `account`.
+func TestHandlerOnlyTakesTheEventsOfItsOwnAccount(t *testing.T) {
+	withAccount := func(acct string) string {
+		return strings.Replace(eventBody("evt_"+acct, "checkout.session.completed", "cs_1", "shop"),
+			`{"id":"evt_`, `{"account":"`+acct+`","id":"evt_`, 1)
+	}
+	p := newHandlerProbe(t, "shop", paidSessionJSON, "checkout.session.completed")
+	p.h.Client.account = "acct_A"
+	if code := p.post(t, withAccount("acct_B"), true); code != 200 || len(p.handled) != 0 || p.fake.path != "" {
+		t.Errorf("another account's event must be ignored in silence: code %d, handled %d", code, len(p.handled))
+	}
+	if code := p.post(t, eventBody("evt_own", "checkout.session.completed", "cs_1", "shop"), true); code != 200 || len(p.handled) != 0 {
+		t.Errorf("an event without account is not this client's: handled %d", len(p.handled))
+	}
+	if code := p.post(t, withAccount("acct_A"), true); code != 200 || len(p.handled) != 1 {
+		t.Errorf("its own account's event must be handled: code %d, handled %d", code, len(p.handled))
+	}
+
+	plain := newHandlerProbe(t, "shop", paidSessionJSON, "checkout.session.completed")
+	if code := plain.post(t, withAccount("acct_A"), true); code != 200 || len(plain.handled) != 0 {
+		t.Errorf("a client with no account must ignore connected accounts' events: handled %d", len(plain.handled))
+	}
+}

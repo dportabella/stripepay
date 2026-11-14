@@ -235,10 +235,10 @@ func TestEndpointCreationNeedsEventsAndURL(t *testing.T) {
 	c := account.client(t, "sk_live_abc")
 	ctx := context.Background()
 
-	if _, err := c.CreateEndpoint(ctx, "", "x", testEvents); err == nil {
+	if _, err := c.CreateEndpoint(ctx, "", "x", testEvents, false); err == nil {
 		t.Error("without a URL it should fail")
 	}
-	if _, err := c.CreateEndpoint(ctx, "https://x.test/w", "x", nil); err == nil {
+	if _, err := c.CreateEndpoint(ctx, "https://x.test/w", "x", nil, false); err == nil {
 		t.Error("without events it should fail")
 	}
 	if _, err := c.UpdateEndpointEvents(ctx, "we_1", nil); err == nil {

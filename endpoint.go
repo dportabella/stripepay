@@ -76,7 +76,7 @@ func (c *Client) FindEndpoint(ctx context.Context, endpointURL string) (*Endpoin
 
 // CreateEndpoint registers a webhook endpoint and returns the signing secret, which is the
 // only moment it can be obtained.
-func (c *Client) CreateEndpoint(ctx context.Context, endpointURL, description string, events []string) (*Endpoint, error) {
+func (c *Client) CreateEndpoint(ctx context.Context, endpointURL, description string, events []string, connect bool) (*Endpoint, error) {
 	if endpointURL == "" {
 		return nil, fmt.Errorf("stripepay: the endpoint URL is required")
 	}
@@ -90,6 +90,9 @@ func (c *Client) CreateEndpoint(ctx context.Context, endpointURL, description st
 	}
 	for _, e := range events {
 		f.Add("enabled_events[]", e)
+	}
+	if connect {
+		f.Set("connect", "true")
 	}
 	var ep Endpoint
 	if err := c.post(ctx, "/v1/webhook_endpoints", f, "", &ep); err != nil {
@@ -155,6 +158,9 @@ type EnsureRequest struct {
 	// subscribed to things nobody reads clutters the delivery log and makes it look as if
 	// there were work pending.
 	Events []string
+	// Connect makes it the endpoint of a PLATFORM: it receives the events of the connected
+	// accounts (each carries `account`), not the platform's own.
+	Connect bool
 	// HaveSecret says whether you already hold the signing secret for this URL. If an
 	// endpoint is already there and you do not have its secret, it cannot be used and it
 	// cannot be recovered: you need Recreate.
@@ -237,7 +243,7 @@ func (c *Client) EnsureEndpoint(ctx context.Context, req EnsureRequest) (*Ensure
 		}
 		action = ActionRecreated
 	}
-	ep, err := c.CreateEndpoint(ctx, req.URL, req.Description, req.Events)
+	ep, err := c.CreateEndpoint(ctx, req.URL, req.Description, req.Events, req.Connect)
 	if err != nil {
 		return nil, err
 	}

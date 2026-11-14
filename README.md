@@ -82,12 +82,13 @@ call) and Stripe renders Markdown links and bold in it.
 CustomText: stripepay.CustomText{Submit: "Acme is a product of Example Ltd. Questions: help@example.com."},
 ```
 
-**Taking a commission (Stripe Connect).** `ConnectedAccount` (`acct_…`) and `ApplicationFeeCents`
-make it a *destination charge*: the buyer pays the whole amount on this client's account (which must
-be the platform's, with Connect enabled), the fee stays there and Stripe transfers the rest to the
-connected account. They go together, only for one-off payments, and the fee is smaller than the
-amount. Refund such a payment with `RefundParams{ReverseTransfer: true, RefundApplicationFee: true}`,
-or the connected account keeps what was given back.
+**Taking a commission (Stripe Connect, direct charges).** `Options.Account` (`acct_…`) makes the client act on a
+CONNECTED account with the platform's key: every call carries the `Stripe-Account` header, so the sessions, payments and
+refunds live in the connected account, which is the merchant (it sees them in its own dashboard and pays Stripe's fees).
+`SessionParams.ApplicationFeeCents` is the platform's commission on a payment (one-off only, smaller than the amount; 0 takes
+none); refund it with `RefundParams.RefundApplicationFee`. A platform receives every connected account's events on ONE
+endpoint created with `EnsureRequest{Connect: true}`; each event carries `account`, and the `Handler` only takes the events of
+its client's own account (a client without an `Account` takes only events without one).
 
 **Receiving the webhook.** [`Handler`](webhook.go) does the whole path: it reads the body
 without parsing it, checks its signature, claims the event exactly once, silently drops what

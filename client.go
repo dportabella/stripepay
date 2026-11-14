@@ -56,6 +56,7 @@ type Client struct {
 	secret        string
 	webhookSecret string
 	service       string
+	account       string
 	http          *http.Client
 	baseURL       string
 }
@@ -66,6 +67,13 @@ type Options struct {
 	// legitimate: it means this client cannot charge, and [Client.Enabled] reports false.
 	// A service that also offers free things can run like that.
 	Secret string
+
+	// Account (`acct_…`) makes every call act on a CONNECTED account (Stripe Connect, direct
+	// charges): the key is the platform's and each request carries the `Stripe-Account`
+	// header, so the sessions, the payments and the refunds live in the connected account,
+	// which is the merchant. It also sets what the [Handler] accepts: only events of that
+	// account. Empty means the key's own account.
+	Account string
 
 	// WebhookSecret is the endpoint's signing secret (`whsec_…`). Without it
 	// [Client.VerifyWebhook] always fails: an event that cannot be checked cannot be
@@ -97,6 +105,7 @@ func New(o Options) (*Client, error) {
 		secret:        o.Secret,
 		webhookSecret: o.WebhookSecret,
 		service:       o.Service,
+		account:       strings.TrimSpace(o.Account),
 		http:          h,
 		baseURL:       defaultBaseURL,
 	}, nil
@@ -104,6 +113,9 @@ func New(o Options) (*Client, error) {
 
 // Enabled reports whether this client can charge. Without a key, it cannot.
 func (c *Client) Enabled() bool { return c.secret != "" }
+
+// Account is the connected account every call acts on, or "" when it is the key's own.
+func (c *Client) Account() string { return c.account }
 
 // Service is this project's mark inside the account.
 func (c *Client) Service() string { return c.service }
@@ -125,6 +137,9 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, i
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.secret)
+	if c.account != "" {
+		req.Header.Set("Stripe-Account", c.account)
+	}
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}

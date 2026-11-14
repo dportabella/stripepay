@@ -18,7 +18,10 @@ import (
 type Event struct {
 	ID   string `json:"id"`
 	Type string `json:"type"`
-	Data struct {
+	// Account is the connected account the event is about (`acct_…`), only on the events a
+	// Connect endpoint delivers; empty on the key's own account.
+	Account string `json:"account"`
+	Data    struct {
 		Object json.RawMessage `json:"object"`
 	} `json:"data"`
 
@@ -222,6 +225,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.fail(r.Context(), nil, err)
 		http.Error(w, "invalid signature", http.StatusBadRequest)
+		return
+	}
+	// Another account's event (a Connect endpoint delivers every connected account's, and a
+	// client without an Account gets none of them): complete silence, and not even claimed.
+	if ev.Account != h.Client.account {
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 	seen, err := h.Seen(r.Context(), ev.ID, ev.Type)
