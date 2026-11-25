@@ -11,7 +11,8 @@
 //   - `stripe-go` REJECTS every event the day the API version pinned on the webhook
 //     endpoint is not exactly the one it expects. That forces you to pin an `api_version`
 //     when you register the endpoint and to keep it in step with the library. Reading the
-//     JSON ourselves, Stripe's forward compatibility is enough and nothing is pinned.
+//     JSON ourselves, Stripe's forward compatibility is enough: no endpoint pins one (the
+//     only version sent is on the request that sets [Options.DisplayName]).
 //   - The surface most applications use is five calls. The official library's dependency
 //     tree, for five calls, does not pay for itself.
 //
@@ -37,6 +38,14 @@ import (
 // defaultBaseURL is the Stripe API. Tests point elsewhere with [Client.SetBaseURL].
 const defaultBaseURL = "https://api.stripe.com"
 
+// brandingAPIVersion is the first Stripe API version that has `branding_settings` on a
+// Checkout Session. The request that carries it says this version, so that it does not
+// depend on the default version of the account the key belongs to. No other request pins one.
+const brandingAPIVersion = "2025-09-30.clover"
+
+// displayNameField is the form field of [Options.DisplayName].
+const displayNameField = "branding_settings[display_name]"
+
 // maxBody is the most that is read from a Stripe response or from a webhook body.
 const maxBody = 1 << 20
 
@@ -57,6 +66,7 @@ type Client struct {
 	webhookSecret string
 	service       string
 	account       string
+	displayName   string // empty only with Options.KeepAccountName
 	http          *http.Client
 	baseURL       string
 }
@@ -88,14 +98,37 @@ type Options struct {
 	// neighbour's on a shared account.
 	Service string
 
+	// DisplayName is the name at the top of the payment page of every session this client
+	// creates (`branding_settings[display_name]`): the brand the buyer knows. A Stripe
+	// account shared by several projects has one public name, and it is not theirs. It only
+	// changes the top of the page: the account's name still appears in the terms and on the
+	// receipts.
+	//
+	// Exactly one of DisplayName and KeepAccountName is required.
+	DisplayName string
+
+	// KeepAccountName says that the payment page must show the name of the account being
+	// charged. It is what a multi-tenant service sets when the account is the tenant's own
+	// (its own key, or [Options.Account]): the tenant is the merchant and the name is theirs.
+	KeepAccountName bool
+
 	// HTTPClient, when given, replaces the default one (a 20 second timeout).
 	HTTPClient *http.Client
 }
 
-// New creates a client. It fails if it is not told which project you are.
+// New creates a client. It fails if it is not told which project you are, or which name the
+// payment page has to show.
 func New(o Options) (*Client, error) {
 	if strings.TrimSpace(o.Service) == "" {
 		return nil, fmt.Errorf("stripepay: Options.Service is required (who you are inside the account)")
+	}
+	name := strings.TrimSpace(o.DisplayName)
+	switch {
+	case name == "" && !o.KeepAccountName:
+		return nil, fmt.Errorf("stripepay: Options.DisplayName is required (the name at the top of the payment page); " +
+			"set KeepAccountName instead only to charge into an account whose own name must show")
+	case name != "" && o.KeepAccountName:
+		return nil, fmt.Errorf("stripepay: Options.DisplayName and Options.KeepAccountName contradict each other: set one")
 	}
 	h := o.HTTPClient
 	if h == nil {
@@ -106,6 +139,7 @@ func New(o Options) (*Client, error) {
 		webhookSecret: o.WebhookSecret,
 		service:       o.Service,
 		account:       strings.TrimSpace(o.Account),
+		displayName:   name,
 		http:          h,
 		baseURL:       defaultBaseURL,
 	}, nil
@@ -119,6 +153,9 @@ func (c *Client) Account() string { return c.account }
 
 // Service is this project's mark inside the account.
 func (c *Client) Service() string { return c.service }
+
+// DisplayName is the name the payment page shows, or "" when it is the account's own.
+func (c *Client) DisplayName() string { return c.displayName }
 
 // Mode reports whether the key is a test or a live one, from the prefix Stripe puts on it.
 func (c *Client) Mode() (Mode, error) { return ModeOf(c.secret) }
@@ -142,6 +179,9 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values, i
 	}
 	if form != nil {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	}
+	if form.Has(displayNameField) {
+		req.Header.Set("Stripe-Version", brandingAPIVersion)
 	}
 	if idem != "" {
 		req.Header.Set("Idempotency-Key", idem)

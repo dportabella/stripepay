@@ -115,7 +115,7 @@ func TestBothShapesOfTheAPIAreRead(t *testing.T) {
 }
 
 func TestCheckInvoice(t *testing.T) {
-	c, _ := New(Options{Secret: "sk_test_x", Service: "shop"})
+	c, _ := New(Options{Secret: "sk_test_x", Service: "shop", DisplayName: "Shop Name"})
 	good := func() (*Invoice, *Subscription) {
 		return &Invoice{ID: "in_1", Status: "paid", Currency: "eur", AmountPaid: 1900, Subscription: "sub_1"},
 			&Subscription{ID: "sub_1", Status: "active", Metadata: map[string]string{"service": "shop", "reference": "sub_ref"}}
@@ -192,7 +192,7 @@ func newSubscriptionProbe(t *testing.T, service, subReply, invReply string) *sub
 		}
 	}))
 	t.Cleanup(srv.Close)
-	c, _ := New(Options{Secret: "sk_test_abc", WebhookSecret: whsec, Service: service})
+	c, _ := New(Options{Secret: "sk_test_abc", WebhookSecret: whsec, Service: service, DisplayName: "Shop Name"})
 	c.SetBaseURL(srv.URL)
 	handle := func(_ context.Context, _ *Event, s *SubscriptionEvent) error {
 		p.got = append(p.got, s)

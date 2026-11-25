@@ -36,6 +36,7 @@ c, err := stripepay.New(stripepay.Options{
     Secret:        keys.Secret,        // sk_… or rk_…
     WebhookSecret: keys.WebhookSecret, // whsec_…
     Service:       "shop",             // who you are inside the account
+    DisplayName:   "The Shop",         // the name at the top of the payment page
 })
 
 s, err := c.CreateSession(ctx, stripepay.SessionParams{
@@ -51,6 +52,14 @@ s, err := c.CreateSession(ctx, stripepay.SessionParams{
 })
 // s.URL is where the buyer is sent.
 ```
+
+**The name on the payment page.** `Options.DisplayName` is shown at the top of every payment page the client creates
+(`branding_settings[display_name]`): on an account shared by several projects, each one shows its own brand instead of the
+account's public name. It changes the top of the page only: the account's name still appears in the terms and on the receipts.
+It is **required**. The one alternative, said explicitly with `KeepAccountName: true`, is to show the name of the account being
+charged, which is what a multi-tenant service does when it charges into a tenant's own account (its own key, or
+`Options.Account`); setting both, or neither, makes `New` fail. The request that carries it, and only that one, sends
+`Stripe-Version: 2025-09-30.clover`, the first version that has the parameter, so it works whatever the account's default is.
 
 **Asking the buyer one more thing.** `CustomFields` puts up to three extra questions on the
 payment page — a billing address for a proper invoice, a purchase order number — for what
@@ -73,9 +82,9 @@ who writes it in the language that page is in (`Locale`). Make them optional unl
 has to answer: a field that only some buyers need blocks the payment of all the others.
 
 **Text on the payment page.** `CustomText` adds a short message under the pay button
-(`Submit`), after it (`AfterSubmit`), by the shipping address or by the terms checkbox. It is
-what to use when the Stripe account's public name is not the name of the product (say who
-sells it and how to reach you). Each message is at most 1,200 characters (checked before the
+(`Submit`), after it (`AfterSubmit`), by the shipping address or by the terms checkbox. Use it
+when the terms and the receipt carry an account name the buyer does not know (say who sells it
+and how to reach you). Each message is at most 1,200 characters (checked before the
 call) and Stripe renders Markdown links and bold in it.
 
 ```go
@@ -207,7 +216,7 @@ change the card, see the invoices and cancel; it has to be switched on once in t
 in each mode) are the rest. Deferred payment methods stay refused for subscriptions too.
 
 Stripe moved some fields in API version 2025-04-30 (the subscription of an invoice went under
-`parent`, the end of the period under the items, the tax became a list). Nothing is pinned
+`parent`, the end of the period under the items, the tax became a list). No read pins a version
 here, so both shapes are read: use `Invoice.SubscriptionID()`, `Invoice.NetCents()`,
 `Subscription.PeriodEnd()`.
 
@@ -291,8 +300,9 @@ outside your repository.
   there is no global state.
 - `stripe-go` **rejects every event** the day the API version pinned on the webhook endpoint
   is not exactly the one it expects. That forces you to pin an `api_version` when you
-  register the endpoint and to keep it in step with the library. Nothing is pinned here: we
-  read the fields we ask for and Stripe's forward compatibility is enough.
+  register the endpoint and to keep it in step with the library. Here no endpoint pins one: we
+  read the fields we ask for and Stripe's forward compatibility is enough. The only version
+  sent is on the request that creates a session with a display name (above).
 - The surface most applications use is five calls (a few more with subscriptions). The official library's dependency tree,
   for five calls, does not pay for itself.
 

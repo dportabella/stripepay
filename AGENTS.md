@@ -18,8 +18,8 @@ Test names are sentences saying what must happen, not which function they touch
    charge into two accounts at once, because multi-tenant callers do exactly that.
 2. **No API version pinned** on webhook endpoints. If a new field is ever needed, it is
    added to the type and that is all.
-3. **No environment variables.** The key, the webhook secret and the service name all come
-   in through `Options`. Reading them from a file is the application's job.
+3. **No environment variables.** The key, the webhook secret, the service name and the name
+   on the payment page all come in through `Options`. Reading them from a file is the application's job.
 4. **The reference (`client_reference_id`) is required** when creating a session, and it is
    an unguessable id of your own. It is the only thing that ties a payment to what has to be
    delivered; a third party's reference goes in `Metadata`.

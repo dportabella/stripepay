@@ -62,7 +62,7 @@ func TestCheckAgainstVectors(t *testing.T) {
 			if !known {
 				t.Fatalf("the vector asks for verdict %q, which does not exist", v.Want)
 			}
-			c, err := New(Options{Secret: "sk_test_x", Service: v.Service})
+			c, err := New(Options{Secret: "sk_test_x", Service: v.Service, DisplayName: "Shop Name"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -116,7 +116,7 @@ func TestEveryVerdictHasAVector(t *testing.T) {
 // inbox with alerts. It is tested separately because it is the one that quietly breaks when
 // somebody "simplifies" the error handling.
 func TestForeignIsNotAnIncident(t *testing.T) {
-	c, _ := New(Options{Secret: "sk_test_x", Service: "shop"})
+	c, _ := New(Options{Secret: "sk_test_x", Service: "shop", DisplayName: "Shop Name"})
 	theirs := &Session{ID: "cs_1", Mode: "payment", Status: "complete", PaymentStatus: "paid",
 		Metadata: map[string]string{MetadataService: "booking"}}
 	err := c.Check(theirs, Expectation{Reference: "ord_1"})
@@ -133,7 +133,7 @@ func TestForeignIsNotAnIncident(t *testing.T) {
 
 // TestIsOurs: the comparison is strict, and a session without the mark is not ours.
 func TestIsOurs(t *testing.T) {
-	c, _ := New(Options{Secret: "sk_test_x", Service: "shop"})
+	c, _ := New(Options{Secret: "sk_test_x", Service: "shop", DisplayName: "Shop Name"})
 	for _, tc := range []struct {
 		name string
 		s    *Session
@@ -154,7 +154,7 @@ func TestIsOurs(t *testing.T) {
 // TestCheckNeedsToKnowWhatToExpect: calling Check without saying which reference was
 // expected would check everything except the thing that matters. It is not allowed.
 func TestCheckNeedsToKnowWhatToExpect(t *testing.T) {
-	c, _ := New(Options{Secret: "sk_test_x", Service: "shop"})
+	c, _ := New(Options{Secret: "sk_test_x", Service: "shop", DisplayName: "Shop Name"})
 	s := &Session{ID: "cs_1", Mode: "payment", Status: "complete", PaymentStatus: "paid",
 		ClientReferenceID: "ord_1", Metadata: map[string]string{MetadataService: "shop"}}
 	if err := c.Check(s, Expectation{}); !errors.Is(err, ErrReference) {

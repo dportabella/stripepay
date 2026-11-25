@@ -505,6 +505,10 @@ func (c *Client) CreateSession(ctx context.Context, p SessionParams) (*Session, 
 		f.Set("expires_at", strconv.FormatInt(p.ExpiresAt.Unix(), 10))
 	}
 
+	if c.displayName != "" {
+		f.Set(displayNameField, c.displayName)
+	}
+
 	for key, msg := range map[string]string{
 		"submit": p.CustomText.Submit, "after_submit": p.CustomText.AfterSubmit,
 		"shipping_address": p.CustomText.ShippingAddress, "terms_of_service_acceptance": p.CustomText.TermsOfServiceAcceptance,

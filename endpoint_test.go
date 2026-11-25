@@ -86,7 +86,7 @@ func newFakeAccount(t *testing.T, initial ...Endpoint) (*fakeAccount, []fakeRequ
 
 func (a *fakeAccount) client(t *testing.T, key string) *Client {
 	t.Helper()
-	c, err := New(Options{Secret: key, Service: "shop"})
+	c, err := New(Options{Secret: key, Service: "shop", DisplayName: "Shop Name"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestEnsureEndpointNeedsAKeyThatSaysItsMode(t *testing.T) {
 	account, _ := newFakeAccount(t)
 	ctx := context.Background()
 
-	without, _ := New(Options{Service: "shop"})
+	without, _ := New(Options{Service: "shop", DisplayName: "Shop Name"})
 	if _, err := without.EnsureEndpoint(ctx, EnsureRequest{URL: "https://x.test/w", Events: testEvents}); err == nil {
 		t.Error("without a key it should fail")
 	}

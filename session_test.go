@@ -39,7 +39,7 @@ func newFakeStripe(t *testing.T, reply string) *fakeStripe {
 
 func (f *fakeStripe) client(t *testing.T, service string) *Client {
 	t.Helper()
-	c, err := New(Options{Secret: "sk_test_abc", WebhookSecret: "whsec_abc", Service: service})
+	c, err := New(Options{Secret: "sk_test_abc", WebhookSecret: "whsec_abc", Service: service, DisplayName: "Shop Name"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestCreateSessionValidations(t *testing.T) {
 }
 
 func TestCreateSessionWithoutAKeyCannotCharge(t *testing.T) {
-	c, _ := New(Options{Service: "shop"})
+	c, _ := New(Options{Service: "shop", DisplayName: "Shop Name"})
 	if _, err := c.CreateSession(context.Background(), goodParams()); err == nil {
 		t.Fatal("without a key there is nothing to charge with")
 	}
@@ -435,7 +435,7 @@ func TestCollectBusinessNameAddsTheNameCollectionParameter(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"cs_x","url":"https://x"}`))
 	}))
 	defer srv.Close()
-	c, err := New(Options{Secret: "sk_test_x", Service: "t"})
+	c, err := New(Options{Secret: "sk_test_x", Service: "t", DisplayName: "Shop Name"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,7 +452,7 @@ func TestCollectBusinessNameAddsTheNameCollectionParameter(t *testing.T) {
 
 func connectClient(t *testing.T, f *fakeStripe) *Client {
 	t.Helper()
-	c, err := New(Options{Secret: "sk_test_platform", WebhookSecret: "whsec_abc", Service: "shop", Account: "acct_1Abc"})
+	c, err := New(Options{Secret: "sk_test_platform", WebhookSecret: "whsec_abc", Service: "shop", DisplayName: "Shop Name", Account: "acct_1Abc"})
 	if err != nil {
 		t.Fatal(err)
 	}

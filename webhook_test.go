@@ -15,7 +15,7 @@ const whsec = "whsec_testsecret"
 
 func webhookClient(t *testing.T, service string) *Client {
 	t.Helper()
-	c, err := New(Options{Secret: "sk_test_abc", WebhookSecret: whsec, Service: service})
+	c, err := New(Options{Secret: "sk_test_abc", WebhookSecret: whsec, Service: service, DisplayName: "Shop Name"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestVerifyWebhook(t *testing.T) {
 	})
 
 	t.Run("without a secret nothing can be checked", func(t *testing.T) {
-		without, _ := New(Options{Secret: "sk_test_abc", Service: "shop"})
+		without, _ := New(Options{Secret: "sk_test_abc", Service: "shop", DisplayName: "Shop Name"})
 		if _, err := without.VerifyWebhook(body, Sign(whsec, now, body), now, DefaultTolerance); err == nil {
 			t.Fatal("without the webhook secret no event may be accepted")
 		}

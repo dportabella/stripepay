@@ -77,7 +77,7 @@ func TestPickKeysRefusesAKeyOfTheOtherMode(t *testing.T) {
 }
 
 func TestClientModeComesFromTheKey(t *testing.T) {
-	c, err := New(Options{Secret: "rk_live_x", Service: "shop"})
+	c, err := New(Options{Secret: "rk_live_x", Service: "shop", DisplayName: "Shop Name"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestClientModeComesFromTheKey(t *testing.T) {
 	if c.Service() != "shop" {
 		t.Errorf("Service = %q", c.Service())
 	}
-	without, _ := New(Options{Service: "shop"})
+	without, _ := New(Options{Service: "shop", DisplayName: "Shop Name"})
 	if without.Enabled() {
 		t.Error("without a key, Enabled should be false")
 	}
@@ -103,7 +103,7 @@ func TestServiceIsMandatory(t *testing.T) {
 	if _, err := New(Options{Secret: "sk_test_x"}); err == nil {
 		t.Fatal("without Service it should fail")
 	}
-	if _, err := New(Options{Secret: "sk_test_x", Service: "   "}); err == nil {
+	if _, err := New(Options{Secret: "sk_test_x", Service: "   ", DisplayName: "Shop Name"}); err == nil {
 		t.Fatal("a blank Service should fail")
 	}
 }
