@@ -237,6 +237,8 @@ coupons, how long to wait before ending access. Those are the application's deci
 reporting); `AmountCents` and `Currency` are still given, as what you expect to be charged. `SessionParams.CouponID`
 applies an existing coupon (Stripe enforces its redemption limit); `Check` does not know about it, so pass the
 discounted amount as `Expectation.MinNetCents`.
+`EnsureCoupon` creates a percentage coupon under your own id (once per payment, no redemption limit, no expiry) if it is
+missing, and fails if the one in the account says something else: it never modifies it.
 
 ## The verdicts
 
