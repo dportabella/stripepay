@@ -157,6 +157,14 @@ projects' events of that mode and rejecting every one of them, because your serv
 knows its signing secret. Disabling rather than deleting keeps the secret alive, so moving
 back is one call and not a new secret.
 
+**Closing a page** that must not take a payment any more, before opening another one for the same thing:
+
+```go
+s, err := c.ExpireSession(ctx, row.SessionID)
+// err: the old page may still take a payment, so do not open another.
+// s.Status == "complete": somebody finished on it; verify it as on the return page.
+```
+
 ## Subscriptions
 
 A session with `Recurring` is a **subscription**: `AmountCents` is the price of one period,
