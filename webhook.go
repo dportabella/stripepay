@@ -6,11 +6,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -130,29 +132,40 @@ func Sign(webhookSecret string, ts time.Time, payload []byte) string {
 // money hide. In order, it:
 //
 //  1. reads the body WITHOUT parsing it and checks its signature;
-//  2. claims the event exactly once, through [Handler.Seen], so that a Stripe redelivery
-//     does not do the work twice;
+//  2. leaves alone an event that was handled already ([Handler.Handled]);
 //  3. silently drops what belongs to another project on the same account;
-//  4. answers 200 straight away, because Stripe waits up to ten seconds for that answer
-//     before redirecting the buyer;
-//  5. and only then **re-reads the session from the API** and calls the project.
+//  4. **re-reads the session from the API** and calls the project;
+//  5. records the event as handled ([Handler.MarkHandled]) only when that work went well,
+//     and then answers 200.
+//
+// Anything that could go well another time (Stripe or your storage not answering, an error
+// of your own) is answered 500: Stripe sends the event again, for up to three days. So the
+// work has to be idempotent, which it already has to be for your return page: it can run
+// again after failing half way, and in two processes at once.
+//
+// The verdicts of [Client.Check] and [Client.CheckInvoice] (a [CheckError]) are not retried:
+// sending the same event again does not change them (a session that is paid later has an
+// event of its own). They are reported to [Handler.OnError], except [ErrForeign], and
+// answered 200.
 //
 // What it does NOT do, because it cannot know: find the row this session pays for and say
 // what was meant to be charged. That is [Client.Check] with an [Expectation], and the
 // project builds it inside its own handler.
 //
-// A warning about step 4: once 200 has gone out, Stripe will not redeliver the event. If
-// the work afterwards fails, [Handler.OnError] is called and somebody has to look at it;
-// the library does not retry on its own. That is the price of answering quickly, which is
-// what Stripe asks for.
+// Stripe waits for the answer before redirecting the buyer (up to ten seconds), and gives up
+// on a delivery that takes longer than a few tens of seconds: work that is slow belongs in a
+// queue of yours, which the handler fills (an error if it could not).
 type Handler struct {
 	// Client is required.
 	Client *Client
 
-	// Seen claims an event: it must return true if the event had already been seen, and
-	// false the first time, recording it. It is required: without idempotency, a Stripe
-	// redelivery delivers twice.
-	Seen func(ctx context.Context, eventID, eventType string) (bool, error)
+	// Handled says whether the event was handled already: whether [Handler.MarkHandled] has
+	// recorded it. It records nothing. Required.
+	Handled func(ctx context.Context, eventID, eventType string) (bool, error)
+
+	// MarkHandled records that the event has been handled, after the work went well.
+	// Required: without it a redelivery does the work again.
+	MarkHandled func(ctx context.Context, eventID, eventType string) error
 
 	// On are the events this project knows how to handle, by type. A type that is not here
 	// is answered 200 and ignored. The session that reaches the handler is the one
@@ -178,12 +191,12 @@ type Handler struct {
 	// Tolerance, when given, replaces [DefaultTolerance].
 	Tolerance time.Duration
 
-	// Background, when given, runs the work left after answering. When nil, the work is
-	// done inside the request, which is what tests want.
-	Background func(name string, fn func())
-
-	// WorkTimeout is the limit for the work done after answering. 30 s by default.
+	// WorkTimeout is the limit for the work of one event. 20 s by default. The work is not
+	// cut short because Stripe stops waiting.
 	WorkTimeout time.Duration
+
+	mu      sync.Mutex
+	running map[string]bool // the events being worked on now
 }
 
 func (h *Handler) now() time.Time {
@@ -206,8 +219,28 @@ func (h *Handler) fail(ctx context.Context, ev *Event, err error) {
 	}
 }
 
+// take marks an event as being worked on; false when it is already.
+func (h *Handler) take(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.running[id] {
+		return false
+	}
+	if h.running == nil {
+		h.running = map[string]bool{}
+	}
+	h.running[id] = true
+	return true
+}
+
+func (h *Handler) release(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.running, id)
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if h.Client == nil || h.Seen == nil {
+	if h.Client == nil || h.Handled == nil || h.MarkHandled == nil {
 		http.Error(w, "webhook misconfigured", http.StatusInternalServerError)
 		return
 	}
@@ -228,146 +261,148 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Another account's event (a Connect endpoint delivers every connected account's, and a
-	// client without an Account gets none of them): complete silence, and not even claimed.
+	// client without an Account gets none of them): complete silence.
 	if ev.Account != h.Client.account {
 		w.WriteHeader(http.StatusOK)
 		return
 	}
-	seen, err := h.Seen(r.Context(), ev.ID, ev.Type)
-	if err != nil {
-		// Here a 500 is the better answer: Stripe will send it again and nothing is lost.
-		h.fail(r.Context(), ev, fmt.Errorf("claiming the event: %w", err))
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	work, err := h.workFor(ev)
+	if err != nil { // an event that cannot be read will not read better another time
+		h.fail(r.Context(), ev, err)
+		w.WriteHeader(http.StatusOK)
 		return
 	}
-	if seen {
+	if work == nil { // not ours, or nothing to do with it
 		w.WriteHeader(http.StatusOK)
 		return
 	}
 
-	if sub := h.OnSubscription[ev.Type]; sub != nil {
-		h.serveSubscription(w, r, ev, sub)
+	timeout := h.WorkTimeout
+	if timeout == 0 {
+		timeout = 20 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), timeout)
+	defer cancel()
+	again := func(err error) {
+		h.fail(ctx, ev, err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}
+	if !h.take(ev.ID) { // delivered again while it is being worked on: nobody knows yet how that ends
+		http.Error(w, "being handled", http.StatusConflict)
 		return
+	}
+	defer h.release(ev.ID)
+	handled, err := h.Handled(ctx, ev.ID, ev.Type)
+	if err != nil {
+		again(fmt.Errorf("asking whether the event was handled: %w", err))
+		return
+	}
+	if handled {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if err := work(ctx); err != nil {
+		var verdict *CheckError
+		if !errors.Is(err, ErrForeign) {
+			if !errors.As(err, &verdict) {
+				again(err)
+				return
+			}
+			h.fail(ctx, ev, err)
+		}
+	}
+	// the work is done: it is recorded even when it used up its time
+	record, done := context.WithTimeout(context.WithoutCancel(r.Context()), timeout)
+	defer done()
+	if err := h.MarkHandled(record, ev.ID, ev.Type); err != nil {
+		again(fmt.Errorf("recording the event as handled: %w", err))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// workFor is what has to be done about an event: nil when there is nothing to do (a type the
+// project does not handle, or what belongs to another project, as far as the payload says).
+func (h *Handler) workFor(ev *Event) (func(context.Context) error, error) {
+	if sub := h.OnSubscription[ev.Type]; sub != nil {
+		return h.subscriptionWork(ev, sub)
 	}
 	handle := h.On[ev.Type]
 	var sess *Session
 	if strings.HasPrefix(ev.Type, "checkout.session.") {
 		s, err := ev.Session()
 		if err != nil {
-			h.fail(r.Context(), ev, err)
-			w.WriteHeader(http.StatusOK)
-			return
+			return nil, err
 		}
 		// A sale from another project on the same account: complete silence.
 		if !h.Client.IsOurs(s) {
-			w.WriteHeader(http.StatusOK)
-			return
+			return nil, nil
 		}
 		sess = s
 	}
 	if handle == nil {
-		w.WriteHeader(http.StatusOK)
-		return
+		return nil, nil
 	}
-
-	w.WriteHeader(http.StatusOK)
-
-	work := func() {
-		timeout := h.WorkTimeout
-		if timeout == 0 {
-			timeout = 30 * time.Second
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
-
+	return func(ctx context.Context) error {
 		// Re-read from the API: the event payload is a snapshot of the moment it happened,
 		// and the state that decides whether to deliver is the state now.
 		fresh := sess
 		if sess != nil && h.Client.Enabled() {
 			got, err := h.Client.Session(ctx, sess.ID)
 			if err != nil {
-				h.fail(ctx, ev, fmt.Errorf("re-reading session %s: %w", sess.ID, err))
-				return
+				return fmt.Errorf("re-reading session %s: %w", sess.ID, err)
 			}
 			fresh = got
 		}
-		if err := handle(ctx, ev, fresh); err != nil {
-			h.fail(ctx, ev, err)
-		}
-	}
-
-	if h.Background != nil {
-		h.Background("webhook "+ev.Type, work)
-		return
-	}
-	work()
+		return handle(ctx, ev, fresh)
+	}, nil
 }
 
-// serveSubscription is the path of an `invoice.*` or `customer.subscription.*` event, after
-// the signature and the claim: drop the neighbour's, answer 200, re-read, call.
-func (h *Handler) serveSubscription(w http.ResponseWriter, r *http.Request, ev *Event, handle func(context.Context, *Event, *SubscriptionEvent) error) {
+// subscriptionWork is [Handler.workFor] for an `invoice.*` or `customer.subscription.*` event: drop the neighbour's, re-read, call.
+func (h *Handler) subscriptionWork(ev *Event, handle func(context.Context, *Event, *SubscriptionEvent) error) (func(context.Context) error, error) {
 	var subID string
 	var inv *Invoice
 	switch {
 	case strings.HasPrefix(ev.Type, "invoice."):
 		i, err := ev.Invoice()
 		if err != nil {
-			h.fail(r.Context(), ev, err)
-			w.WriteHeader(http.StatusOK)
-			return
+			return nil, err
 		}
 		inv, subID = i, i.SubscriptionID()
 		if subID == "" {
-			w.WriteHeader(http.StatusOK) // a one-off invoice: not a subscription's
-			return
+			return nil, nil // a one-off invoice: not a subscription's
 		}
 		// The payload often says whose it is, which saves a call for every neighbour's invoice.
 		if md := i.SubscriptionMetadata(); md != nil && md[MetadataService] != h.Client.service {
-			w.WriteHeader(http.StatusOK)
-			return
+			return nil, nil
 		}
 	case strings.HasPrefix(ev.Type, "customer.subscription."):
 		s, err := ev.Subscription()
 		if err != nil {
-			h.fail(r.Context(), ev, err)
-			w.WriteHeader(http.StatusOK)
-			return
+			return nil, err
 		}
 		if !h.Client.IsOurSubscription(s) {
-			w.WriteHeader(http.StatusOK)
-			return
+			return nil, nil
 		}
 		subID = s.ID
 	default:
-		h.fail(r.Context(), ev, fmt.Errorf("%s is not an event about a subscription", ev.Type))
-		w.WriteHeader(http.StatusOK)
-		return
+		return nil, fmt.Errorf("%s is not an event about a subscription", ev.Type)
 	}
-	w.WriteHeader(http.StatusOK)
-
-	work := func() {
-		timeout := h.WorkTimeout
-		if timeout == 0 {
-			timeout = 30 * time.Second
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		defer cancel()
+	return func(ctx context.Context) error {
 		out := &SubscriptionEvent{}
 		if h.Client.Enabled() {
 			sub, err := h.Client.Subscription(ctx, subID)
 			if err != nil {
-				h.fail(ctx, ev, fmt.Errorf("re-reading subscription %s: %w", subID, err))
-				return
+				return fmt.Errorf("re-reading subscription %s: %w", subID, err)
 			}
 			if !h.Client.IsOurSubscription(sub) {
-				return // the neighbour's, found out only now: silence
+				return nil // the neighbour's, found out only now: silence
 			}
 			out.Subscription = sub
 			if inv != nil {
 				fresh, err := h.Client.Invoice(ctx, inv.ID)
 				if err != nil {
-					h.fail(ctx, ev, fmt.Errorf("re-reading invoice %s: %w", inv.ID, err))
-					return
+					return fmt.Errorf("re-reading invoice %s: %w", inv.ID, err)
 				}
 				out.Invoice = fresh
 			}
@@ -379,13 +414,6 @@ func (h *Handler) serveSubscription(w http.ResponseWriter, r *http.Request, ev *
 				out.Subscription, _ = ev.Subscription()
 			}
 		}
-		if err := handle(ctx, ev, out); err != nil {
-			h.fail(ctx, ev, err)
-		}
-	}
-	if h.Background != nil {
-		h.Background("webhook "+ev.Type, work)
-		return
-	}
-	work()
+		return handle(ctx, ev, out)
+	}, nil
 }

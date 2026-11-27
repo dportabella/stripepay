@@ -200,10 +200,10 @@ func newSubscriptionProbe(t *testing.T, service, subReply, invReply string) *sub
 	}
 	p.h = &Handler{Client: c, OnSubscription: map[string]func(context.Context, *Event, *SubscriptionEvent) error{
 		"invoice.paid": handle, "customer.subscription.deleted": handle},
-		Seen: func(_ context.Context, id, _ string) (bool, error) {
-			seen := p.claims[id]
+		Handled: func(_ context.Context, id, _ string) (bool, error) { return p.claims[id], nil },
+		MarkHandled: func(_ context.Context, id, _ string) error {
 			p.claims[id] = true
-			return seen, nil
+			return nil
 		},
 		OnError: func(_ context.Context, _ *Event, err error) { p.errs = append(p.errs, err) }}
 	return p

@@ -91,7 +91,7 @@ func TestVerifyWebhook(t *testing.T) {
 type handlerProbe struct {
 	h        *Handler
 	fake     *fakeStripe
-	claimed  map[string]bool
+	recorded map[string]bool
 	handled  []string
 	sessions []*Session
 	errs     []error
@@ -104,7 +104,7 @@ func newHandlerProbe(t *testing.T, service, sessionReply string, events ...strin
 	c := f.client(t, service)
 	c.webhookSecret = whsec
 
-	p := &handlerProbe{fake: f, claimed: map[string]bool{}}
+	p := &handlerProbe{fake: f, recorded: map[string]bool{}}
 	on := map[string]func(context.Context, *Event, *Session) error{}
 	for _, e := range events {
 		on[e] = func(ctx context.Context, ev *Event, s *Session) error {
@@ -117,17 +117,14 @@ func newHandlerProbe(t *testing.T, service, sessionReply string, events ...strin
 		}
 	}
 	p.h = &Handler{
-		Client: c,
-		Seen: func(ctx context.Context, id, typ string) (bool, error) {
-			if p.claimed[id] {
-				return true, nil
-			}
-			p.claimed[id] = true
-			return false, nil
+		Client:  c,
+		Handled: func(ctx context.Context, id, typ string) (bool, error) { return p.recorded[id], nil },
+		MarkHandled: func(ctx context.Context, id, typ string) error {
+			p.recorded[id] = true
+			return nil
 		},
 		On:      on,
 		OnError: func(ctx context.Context, ev *Event, err error) { p.errs = append(p.errs, err) },
-		// Background left nil: the work runs inside the request, so the test does not wait.
 	}
 	return p
 }
@@ -239,7 +236,7 @@ func TestHandlerReportsWhatTheProjectCouldNotDo(t *testing.T) {
 	p := newHandlerProbe(t, "shop", paidSessionJSON, "checkout.session.completed")
 	p.handleIn = func() error { return errors.New("the file could not be stamped") }
 
-	if code := p.post(t, eventBody("evt_6", "checkout.session.completed", "cs_1", "shop"), true); code != 200 {
+	if code := p.post(t, eventBody("evt_6", "checkout.session.completed", "cs_1", "shop"), true); code != 500 || p.recorded["evt_6"] {
 		t.Fatalf("code %d", code)
 	}
 	if len(p.errs) != 1 || !strings.Contains(p.errs[0].Error(), "stamped") {
@@ -251,7 +248,7 @@ func TestHandlerReportsWhenItCannotRereadTheSession(t *testing.T) {
 	p := newHandlerProbe(t, "shop", `{"error":{"message":"No such checkout session"}}`, "checkout.session.completed")
 	p.fake.status = 404
 
-	if code := p.post(t, eventBody("evt_7", "checkout.session.completed", "cs_1", "shop"), true); code != 200 {
+	if code := p.post(t, eventBody("evt_7", "checkout.session.completed", "cs_1", "shop"), true); code != 500 || p.recorded["evt_7"] {
 		t.Fatalf("code %d", code)
 	}
 	if len(p.handled) != 0 {
@@ -281,40 +278,6 @@ func TestHandlerOnlyAcceptsPost(t *testing.T) {
 	p.h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/webhook/stripe", nil))
 	if w.Code != http.StatusMethodNotAllowed {
 		t.Errorf("code %d", w.Code)
-	}
-}
-
-// TestHandlerRetriesWhenItCannotClaim: if it cannot be known whether the event was already
-// handled, a 500 and a Stripe redelivery are better than a 200 that loses it.
-func TestHandlerRetriesWhenItCannotClaim(t *testing.T) {
-	p := newHandlerProbe(t, "shop", paidSessionJSON, "checkout.session.completed")
-	p.h.Seen = func(ctx context.Context, id, typ string) (bool, error) {
-		return false, errors.New("the database is not answering")
-	}
-	if code := p.post(t, eventBody("evt_8", "checkout.session.completed", "cs_1", "shop"), true); code != 500 {
-		t.Fatalf("code %d, wanted 500 so that Stripe retries", code)
-	}
-}
-
-// TestHandlerRunsTheWorkInTheBackgroundWhenAsked: Stripe waits up to ten seconds for the
-// webhook's answer before redirecting the buyer, which is why the work comes afterwards.
-func TestHandlerRunsTheWorkInTheBackgroundWhenAsked(t *testing.T) {
-	p := newHandlerProbe(t, "shop", paidSessionJSON, "checkout.session.completed")
-	var pending func()
-	p.h.Background = func(name string, fn func()) { pending = fn }
-
-	if code := p.post(t, eventBody("evt_9", "checkout.session.completed", "cs_1", "shop"), true); code != 200 {
-		t.Fatalf("code %d", code)
-	}
-	if len(p.handled) != 0 {
-		t.Fatal("the work should not have run inside the request")
-	}
-	if pending == nil {
-		t.Fatal("no background work was scheduled")
-	}
-	pending()
-	if len(p.handled) != 1 {
-		t.Errorf("the background work did not run: %v", p.handled)
 	}
 }
 

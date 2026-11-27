@@ -100,15 +100,18 @@ endpoint created with `EnsureRequest{Connect: true}`; each event carries `accoun
 its client's own account (a client without an `Account` takes only events without one).
 
 **Receiving the webhook.** [`Handler`](webhook.go) does the whole path: it reads the body
-without parsing it, checks its signature, claims the event exactly once, silently drops what
-belongs to the neighbour, answers 200 straight away — Stripe waits up to ten seconds for
-that answer before redirecting the buyer — and **re-reads the session from the API** before
-calling you.
+without parsing it, checks its signature, silently drops what belongs to the neighbour,
+**re-reads the session from the API**, calls you, records the event as handled **only when
+your work went well**, and answers 200. Whatever could go well another time is answered 500,
+so Stripe sends the event again: your work has to be idempotent. A verdict of `Check` or
+`CheckInvoice` is reported and not asked for again. Keep the work short (Stripe waits for the
+answer before redirecting the buyer); what is slow goes to a queue of yours.
 
 ```go
 h := &stripepay.Handler{
     Client: c,
-    Seen:   store.SeenWebhook, // idempotency: your own table
+    Handled:     store.WebhookHandled,     // your own table: is the event in it?
+    MarkHandled: store.MarkWebhookHandled, // called only after the work went well
     On: map[string]func(context.Context, *stripepay.Event, *stripepay.Session) error{
         "checkout.session.completed": func(ctx context.Context, ev *stripepay.Event, s *stripepay.Session) error {
             row, err := store.ByReference(ctx, s.ClientReferenceID)
@@ -327,11 +330,15 @@ can't rely on triggering fulfillment only from your Checkout landing page, becau
 customers aren't guaranteed to visit that page." The return page may run the same idempotent
 verification so the buyer does not have to wait, but the event is the authority.
 
-**Once 200 has gone out, Stripe does not redeliver.** That is the price of answering quickly,
-and it is stated on [`Handler`](webhook.go): if the work afterwards fails, `OnError` is
-called and somebody has to look at it. The one case that deliberately answers 500 is when it
-cannot be known whether the event was already handled, because then a redelivery is better
-than losing it.
+**200 only when the work is done.** Until v1.13 the handler claimed the event and answered
+200 before doing the work, so a network error while re-reading the session, or a database that
+did not answer, lost the event for good: Stripe never sent it again and only a log line said so.
+Answering after the work costs the buyer a little time on the redirect and buys Stripe's own
+retries, for three days. The price is on the project: the work must be idempotent.
+
+**Upgrading from v1.13:** `Seen` (which claimed) is replaced by `Handled` (which only reads) and
+`MarkHandled`; `Background` is gone. A project that did slow work in the background now puts it
+in a queue of its own and returns an error when it cannot.
 
 ## The tests are the contract
 
